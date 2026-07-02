@@ -1,4 +1,5 @@
 """PartnerSuggestion endpoints: CRUD + actions accept / reject."""
+from django.db.models import Q
 from rest_framework import status, generics
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -14,7 +15,7 @@ from rest_framework import serializers
 from ..models import (
     Incident, PartnerSuggestion, Collaboration,
     SUGGESTION_PENDING, SUGGESTION_ACCEPTED, SUGGESTION_REJECTED,
-    COLLAB_ROLE_LEADER,
+    COLLAB_ROLE_LEADER, ORG_ROLE_ADMIN, ORG_ROLE_BUREAU,
 )
 from ..serializer import PartnerSuggestionSerializer
 from ..permissions import (
@@ -36,6 +37,14 @@ def _can_decide_suggestion(user, suggestion):
     if not user or not user.is_authenticated:
         return False
     if suggestion.suggested_partner_id == user.id:
+        return True
+    # Tout admin / agent de bureau de l'ORGANISATION invitée peut décider :
+    # l'invitation est adressée à l'org, pas au seul admin tiré par .first().
+    partner = suggestion.suggested_partner
+    partner_org_id = getattr(partner, 'organisation_member_id', None) if partner else None
+    user_org_id = getattr(user, 'organisation_member_id', None)
+    if (partner_org_id and user_org_id and partner_org_id == user_org_id
+            and getattr(user, 'org_role', None) in (ORG_ROLE_ADMIN, ORG_ROLE_BUREAU)):
         return True
     if is_super_admin(user):
         return True
@@ -75,9 +84,18 @@ class MyReceivedSuggestionsView(generics.ListAPIView):
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
-        qs = PartnerSuggestion.objects.filter(
-            suggested_partner=self.request.user
-        ).select_related('incident', 'suggested_by').order_by('-created_at')
+        user = self.request.user
+        # Invitations dont JE suis le destinataire exact, OU adressées à MON
+        # organisation (résolues vers un de ses admins) si je suis admin/bureau :
+        # une invitation à l'org doit être visible par tous ses responsables, pas
+        # seulement l'admin arbitraire tiré par .first() lors de la résolution.
+        q = Q(suggested_partner=user)
+        org_id = getattr(user, 'organisation_member_id', None)
+        if org_id is not None and getattr(user, 'org_role', None) in (ORG_ROLE_ADMIN, ORG_ROLE_BUREAU):
+            q |= Q(suggested_partner__organisation_member_id=org_id)
+        qs = PartnerSuggestion.objects.filter(q).select_related(
+            'incident', 'suggested_by', 'suggested_partner'
+        ).order_by('-created_at')
         status_param = self.request.query_params.get('status')
         if status_param in (SUGGESTION_PENDING, SUGGESTION_ACCEPTED, SUGGESTION_REJECTED):
             qs = qs.filter(status=status_param)

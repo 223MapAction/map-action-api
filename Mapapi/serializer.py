@@ -986,6 +986,21 @@ class PartnerSuggestionSerializer(serializers.ModelSerializer):
             return user
         return None
 
+    def _is_recipient(self, obj, u):
+        """L'utilisateur est destinataire de l'invitation : soit le partenaire exact
+        résolu, soit un admin / agent de bureau de l'ORGANISATION invitée. Une
+        invitation est adressée à l'ORG : elle doit être visible par tous ses
+        responsables, pas seulement l'admin arbitraire tiré par .first()."""
+        if obj.suggested_partner_id == u.id:
+            return True
+        partner = obj.suggested_partner
+        partner_org_id = getattr(partner, 'organisation_member_id', None) if partner else None
+        user_org_id = getattr(u, 'organisation_member_id', None)
+        return bool(
+            partner_org_id and user_org_id and partner_org_id == user_org_id
+            and getattr(u, 'org_role', None) in (ORG_ROLE_ADMIN, ORG_ROLE_BUREAU)
+        )
+
     @extend_schema_field(OpenApiTypes.STR)
     def get_direction(self, obj) -> str | None:
         u = self._current_user()
@@ -993,7 +1008,7 @@ class PartnerSuggestionSerializer(serializers.ModelSerializer):
             return None
         if obj.suggested_by_id == u.id:
             return 'sent'
-        if obj.suggested_partner_id == u.id:
+        if self._is_recipient(obj, u):
             return 'received'
         return 'other'
 
@@ -1003,16 +1018,16 @@ class PartnerSuggestionSerializer(serializers.ModelSerializer):
 
     def get_is_receiver(self, obj) -> bool:
         u = self._current_user()
-        return bool(u is not None and obj.suggested_partner_id == u.id)
+        return bool(u is not None and self._is_recipient(obj, u))
 
     def get_can_respond(self, obj) -> bool:
-        # Seul le DESTINATAIRE (organisation invitée) accepte/refuse, tant que la
-        # demande est en attente. C'est ce flag qui pilote l'affichage des boutons
-        # « Accepter / Refuser » côté front.
+        # Le DESTINATAIRE (l'organisation invitée : partenaire exact OU admin/bureau
+        # de l'org invitée) accepte/refuse tant que c'est en attente. Pilote
+        # l'affichage des boutons « Accepter / Refuser » côté front.
         u = self._current_user()
         return bool(
             u is not None
-            and obj.suggested_partner_id == u.id
+            and self._is_recipient(obj, u)
             and obj.status == SUGGESTION_PENDING
         )
 
