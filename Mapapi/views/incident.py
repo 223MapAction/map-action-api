@@ -361,6 +361,51 @@ class IncidentAPIView(generics.CreateAPIView):
         },
     ),
 )
+def _auto_take_in_charge_if_field_agent(incident, reporter):
+    """Prise en charge AUTOMATIQUE d'un incident remonté par un AGENT DE TERRAIN.
+
+    Un agent de terrain agit pour le compte de SON organisation ; son signalement
+    est donc directement pris en charge EN INTERNE par cette organisation, dirigée
+    par un responsable web de l'org (l'agent est mobile-only et ne peut pas piloter
+    l'incident sur le dashboard). Ainsi l'incident ne reste pas « à prendre » et ne
+    peut pas être capté par une autre organisation.
+
+    No-op (retourne ``None``) si le rapporteur n'est pas un agent de terrain, n'a
+    pas d'organisation, si l'org n'a aucun responsable web (admin d'org, à défaut
+    agent de bureau), ou si l'incident est déjà pris en charge. Sinon renvoie le
+    leader désigné.
+    """
+    if reporter is None or getattr(reporter, 'org_role', None) != ORG_ROLE_FIELD:
+        return None
+    org = getattr(reporter, 'organisation_member', None)
+    if org is None:
+        return None
+    if incident.taken_by_id is not None or incident.take_in_charge_mode is not None:
+        return None
+    leader = (
+        User.objects.filter(organisation_member=org, org_role=ORG_ROLE_ADMIN).first()
+        or User.objects.filter(organisation_member=org, org_role=ORG_ROLE_BUREAU).first()
+    )
+    if leader is None:
+        return None  # aucun responsable web -> on laisse l'incident en 'declared'
+    incident.taken_by = leader
+    incident.etat = TAKEN
+    incident.take_in_charge_mode = 'internal'
+    incident.taken_in_charge_at = timezone.now()
+    # Anti-gel (spec T3) : la prise en compte réarme les avertissements.
+    incident.antigel_warned_75 = False
+    incident.antigel_warned_90 = False
+    incident.save(update_fields=[
+        'taken_by', 'etat', 'take_in_charge_mode', 'taken_in_charge_at',
+        'antigel_warned_75', 'antigel_warned_90',
+    ])
+    Collaboration.objects.get_or_create(
+        incident=incident, user=leader,
+        defaults={'role': COLLAB_ROLE_LEADER, 'status': COLLAB_STATUS_ACCEPTED},
+    )
+    return leader
+
+
 class IncidentAPIListView(generics.CreateAPIView):
     permission_classes = ()
 
@@ -478,7 +523,26 @@ class IncidentAPIListView(generics.CreateAPIView):
                 prediction.error_message = "Incident has no photo."
                 prediction.save(update_fields=['status', 'error_message', 'updated_at'])
 
-        return Response(serializer.data, status=status.HTTP_201_CREATED)
+        # --- Prise en charge automatique si l'incident est remonté par un agent de
+        # terrain : il est alors pris en charge EN INTERNE par son organisation, ce
+        # qui l'empêche d'être capté par une autre org (cf. helper). ---
+        if incident_obj is not None:
+            reporter = None
+            uid = request.data.get('user_id')
+            if uid:
+                try:
+                    reporter = User.objects.get(id=uid)
+                except (User.DoesNotExist, ValueError, ValidationError):
+                    reporter = None
+            _auto_take_in_charge_if_field_agent(incident_obj, reporter)
+
+        # Re-sérialiser : `serializer.data` a été mis en cache plus haut et ne
+        # refléterait pas la prise en charge automatique éventuelle.
+        response_data = (
+            IncidentSerializer(incident_obj).data
+            if incident_obj is not None else serializer.data
+        )
+        return Response(response_data, status=status.HTTP_201_CREATED)
 
 
 @extend_schema_view(
