@@ -332,35 +332,6 @@ class IncidentAPIView(generics.CreateAPIView):
         item.save(update_fields=['is_deleted', 'deleted_at'])
         return Response(status=204)
 
-@extend_schema_view(
-    get=extend_schema(
-        tags=['Incidents'],
-        operation_id='incidents_list',
-        summary="Lister les incidents",
-        description="Liste paginée des incidents, restreinte selon le rôle web du "
-                    "demandeur (authentification requise).",
-        parameters=[
-            OpenApiParameter('page', OpenApiTypes.INT, OpenApiParameter.QUERY,
-                             description="Numéro de page."),
-            OpenApiParameter('page_size', OpenApiTypes.INT, OpenApiParameter.QUERY,
-                             description="Taille de page."),
-        ],
-        responses={200: IncidentGetSerializer(many=True)},
-    ),
-    post=extend_schema(
-        tags=['Incidents'],
-        operation_id='incidents_create',
-        summary="Déclarer un incident",
-        description="Crée un incident (déclaration citoyenne/mobile, public). Crée la zone "
-                    "si nécessaire, +1 point au reporter, déclenche l'analyse IA (Prediction) "
-                    "et la conversion vidéo éventuelle.",
-        request=IncidentSerializer,
-        responses={
-            201: IncidentSerializer,
-            400: OpenApiResponse(description="Données invalides ou champ `zone` manquant."),
-        },
-    ),
-)
 def _auto_take_in_charge_if_field_agent(incident, reporter):
     """Prise en charge AUTOMATIQUE d'un incident remonté par un AGENT DE TERRAIN.
 
@@ -406,6 +377,35 @@ def _auto_take_in_charge_if_field_agent(incident, reporter):
     return leader
 
 
+@extend_schema_view(
+    get=extend_schema(
+        tags=['Incidents'],
+        operation_id='incidents_list',
+        summary="Lister les incidents",
+        description="Liste paginée des incidents, restreinte selon le rôle web du "
+                    "demandeur (authentification requise).",
+        parameters=[
+            OpenApiParameter('page', OpenApiTypes.INT, OpenApiParameter.QUERY,
+                             description="Numéro de page."),
+            OpenApiParameter('page_size', OpenApiTypes.INT, OpenApiParameter.QUERY,
+                             description="Taille de page."),
+        ],
+        responses={200: IncidentGetSerializer(many=True)},
+    ),
+    post=extend_schema(
+        tags=['Incidents'],
+        operation_id='incidents_create',
+        summary="Déclarer un incident",
+        description="Crée un incident (déclaration citoyenne/mobile, public). Crée la zone "
+                    "si nécessaire, +1 point au reporter, déclenche l'analyse IA (Prediction) "
+                    "et la conversion vidéo éventuelle.",
+        request=IncidentSerializer,
+        responses={
+            201: IncidentSerializer,
+            400: OpenApiResponse(description="Données invalides ou champ `zone` manquant."),
+        },
+    ),
+)
 class IncidentAPIListView(generics.CreateAPIView):
     permission_classes = ()
 
