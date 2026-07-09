@@ -45,7 +45,16 @@ def collaboration_scope_q(user, scope):
         return Q()
     scope = (scope or 'all').lower()
     if scope == 'self':
-        return Q(user=user)
+        # « Mes collaborations » : les miennes + celles de MON organisation quand
+        # je suis admin / agent de bureau. Une collaboration issue d'une invitation
+        # à l'org est rattachée à l'admin résolu (le suggested_partner d'une
+        # suggestion acceptée) ; sans cet élargissement, l'admin qui a accepté — ou
+        # tout autre responsable de l'org — ne la verrait jamais ici.
+        q = Q(user=user)
+        org_id = getattr(user, 'organisation_member_id', None)
+        if org_id and (is_org_admin(user) or is_bureau_agent(user)):
+            q |= Q(user__organisation_member_id=org_id)
+        return q
     if scope == 'received':
         return Q(incident__taken_by=user) & ~Q(user=user)
     return Q(user=user) | Q(incident__taken_by=user)

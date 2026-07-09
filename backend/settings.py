@@ -17,8 +17,9 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # SECURITY WARNING: keep the secret key used in production secret!
 SECRET_KEY = os.environ.get("SECRET_KEY")
 
-# À changer quand on le mettra en production
-DEBUG = True
+# DEBUG doit être FALSE en production (fuite de traceback/settings sur toute erreur
+# sinon). Piloté par l'env : par défaut False ; en local, mettre DEBUG=True dans .env.
+DEBUG = os.environ.get("DEBUG", "False").strip().lower() in ("true", "1", "yes", "on")
 
 
 # Split the comma-separated ALLOWED_HOSTS environment variable into a list
@@ -342,6 +343,10 @@ USE_TZ = True
 
 STATIC_URL = 'static/'
 STATIC_ROOT = os.path.join(BASE_DIR, "static")
+# WhiteNoise sert le statique via les finders même avec DEBUG=False (collectstatic
+# n'est pas lancé au déploiement, donc STATIC_ROOT ne contient pas drf_spectacular
+# _sidecar). Sans ceci, l'UI Swagger/ReDoc perdrait son CSS/JS quand DEBUG=False.
+WHITENOISE_USE_FINDERS = True
 MEDIA_ROOT = os.path.join(BASE_DIR, 'uploads')
 MEDIA_URL = '/uploads/'
 

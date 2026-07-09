@@ -933,6 +933,30 @@ class PartnerSuggestionSerializer(serializers.ModelSerializer):
         write_only=True,
         required=False,
     )
+    # --- Champs de l'incident pour l'affichage des cartes (parité avec
+    # CollaborationSerializer). Sans eux, les demandes de partenariat s'affichaient
+    # dans l'onglet « Demandes » sans photo, description ni détails — contrairement
+    # aux cartes de collaboration. On expose donc EXACTEMENT les mêmes raccourcis.
+    incident_photo = serializers.ImageField(source='incident.photo', read_only=True)
+    incident_thumbnail = serializers.ImageField(source='incident.thumbnail', read_only=True)
+    incident_description = serializers.CharField(
+        source='incident.description', read_only=True, default=None
+    )
+    incident_zone = serializers.CharField(source='incident.zone', read_only=True, default=None)
+    incident_etat = serializers.CharField(source='incident.etat', read_only=True, default=None)
+    incident_details = IncidentSerializer(source='incident', read_only=True)
+    # --- Sens de la demande RELATIF à l'utilisateur courant (#FE) ---
+    # Sur une même liste (« Demandes »), chaque item indique si l'utilisateur
+    # connecté est l'émetteur (il a invité) ou le destinataire (il a été invité) :
+    #   direction   : 'sent' (j'ai invité) | 'received' (j'ai été invité) | 'other'
+    #   is_sender   : je suis l'émetteur de l'invitation
+    #   is_receiver : je suis l'organisation invitée
+    #   can_respond : je suis le destinataire ET la demande est en attente
+    #                 -> c'est à MOI d'accepter / refuser (afficher les boutons)
+    direction = serializers.SerializerMethodField()
+    is_sender = serializers.SerializerMethodField()
+    is_receiver = serializers.SerializerMethodField()
+    can_respond = serializers.SerializerMethodField()
 
     class Meta:
         model = PartnerSuggestion
@@ -954,6 +978,58 @@ class PartnerSuggestionSerializer(serializers.ModelSerializer):
         if not u:
             return None
         return f"{u.first_name or ''} {u.last_name or ''}".strip() or u.email
+
+    def _current_user(self):
+        request = self.context.get('request')
+        user = getattr(request, 'user', None)
+        if user is not None and getattr(user, 'is_authenticated', False):
+            return user
+        return None
+
+    def _is_recipient(self, obj, u):
+        """L'utilisateur est destinataire de l'invitation : soit le partenaire exact
+        résolu, soit un admin / agent de bureau de l'ORGANISATION invitée. Une
+        invitation est adressée à l'ORG : elle doit être visible par tous ses
+        responsables, pas seulement l'admin arbitraire tiré par .first()."""
+        if obj.suggested_partner_id == u.id:
+            return True
+        partner = obj.suggested_partner
+        partner_org_id = getattr(partner, 'organisation_member_id', None) if partner else None
+        user_org_id = getattr(u, 'organisation_member_id', None)
+        return bool(
+            partner_org_id and user_org_id and partner_org_id == user_org_id
+            and getattr(u, 'org_role', None) in (ORG_ROLE_ADMIN, ORG_ROLE_BUREAU)
+        )
+
+    @extend_schema_field(OpenApiTypes.STR)
+    def get_direction(self, obj) -> str | None:
+        u = self._current_user()
+        if u is None:
+            return None
+        if obj.suggested_by_id == u.id:
+            return 'sent'
+        if self._is_recipient(obj, u):
+            return 'received'
+        return 'other'
+
+    def get_is_sender(self, obj) -> bool:
+        u = self._current_user()
+        return bool(u is not None and obj.suggested_by_id == u.id)
+
+    def get_is_receiver(self, obj) -> bool:
+        u = self._current_user()
+        return bool(u is not None and self._is_recipient(obj, u))
+
+    def get_can_respond(self, obj) -> bool:
+        # Le DESTINATAIRE (l'organisation invitée : partenaire exact OU admin/bureau
+        # de l'org invitée) accepte/refuse tant que c'est en attente. Pilote
+        # l'affichage des boutons « Accepter / Refuser » côté front.
+        u = self._current_user()
+        return bool(
+            u is not None
+            and self._is_recipient(obj, u)
+            and obj.status == SUGGESTION_PENDING
+        )
 
     def get_unique_together_validators(self):
         # Le modèle a unique_together (incident, suggested_partner). DRF en déduit

@@ -1,4 +1,5 @@
 """PartnerSuggestion endpoints: CRUD + actions accept / reject."""
+from django.db.models import Q
 from rest_framework import status, generics
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -14,12 +15,45 @@ from rest_framework import serializers
 from ..models import (
     Incident, PartnerSuggestion, Collaboration,
     SUGGESTION_PENDING, SUGGESTION_ACCEPTED, SUGGESTION_REJECTED,
+    COLLAB_ROLE_LEADER, ORG_ROLE_ADMIN, ORG_ROLE_BUREAU,
 )
 from ..serializer import PartnerSuggestionSerializer
 from ..permissions import (
-    IsIncidentCollaborator, IsIncidentContributor, IsIncidentLeader,
+    IsIncidentCollaborator, IsIncidentContributor,
     IsIncidentLeaderOrContributor,
 )
+from ..roles import is_super_admin
+
+
+def _can_decide_suggestion(user, suggestion):
+    """Qui peut accepter/refuser une suggestion de partenariat.
+
+    Le DESTINATAIRE (l'organisation invitée = ``suggested_partner``) décide : c'est
+    SA décision de rejoindre l'incident, exactement comme le veut le flux « le
+    leader invite → l'org invitée accepte/refuse ». Le leader de l'incident et le
+    super admin conservent aussi ce droit (rétro-compatibilité avec le flux
+    historique « suggestion adressée au leader »).
+    """
+    if not user or not user.is_authenticated:
+        return False
+    if suggestion.suggested_partner_id == user.id:
+        return True
+    # Tout admin / agent de bureau de l'ORGANISATION invitée peut décider :
+    # l'invitation est adressée à l'org, pas au seul admin tiré par .first().
+    partner = suggestion.suggested_partner
+    partner_org_id = getattr(partner, 'organisation_member_id', None) if partner else None
+    user_org_id = getattr(user, 'organisation_member_id', None)
+    if (partner_org_id and user_org_id and partner_org_id == user_org_id
+            and getattr(user, 'org_role', None) in (ORG_ROLE_ADMIN, ORG_ROLE_BUREAU)):
+        return True
+    if is_super_admin(user):
+        return True
+    incident = suggestion.incident
+    if incident.taken_by_id == user.id:
+        return True
+    return Collaboration.objects.filter(
+        incident=incident, user=user, role=COLLAB_ROLE_LEADER, status='accepted',
+    ).exists()
 
 
 @extend_schema_view(get=extend_schema(
@@ -42,17 +76,26 @@ class MyReceivedSuggestionsView(generics.ListAPIView):
     GET /my-suggestions/received/  — Liste les suggestions où JE suis le partenaire proposé.
 
     Filtre optionnel via ?status=pending|accepted|rejected.
-    L'utilisateur peut ensuite décider d'accepter/refuser via les endpoints
-    /incidents/<id>/suggestions/<pk>/accept|reject/ (s'il est leader de
-    l'incident concerné).
+    En tant que destinataire (organisation invitée), l'utilisateur décide
+    d'accepter/refuser via /incidents/<id>/suggestions/<pk>/accept|reject/
+    (cf. le flag `can_respond` renvoyé sur chaque item).
     """
     serializer_class = PartnerSuggestionSerializer
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
-        qs = PartnerSuggestion.objects.filter(
-            suggested_partner=self.request.user
-        ).select_related('incident', 'suggested_by').order_by('-created_at')
+        user = self.request.user
+        # Invitations dont JE suis le destinataire exact, OU adressées à MON
+        # organisation (résolues vers un de ses admins) si je suis admin/bureau :
+        # une invitation à l'org doit être visible par tous ses responsables, pas
+        # seulement l'admin arbitraire tiré par .first() lors de la résolution.
+        q = Q(suggested_partner=user)
+        org_id = getattr(user, 'organisation_member_id', None)
+        if org_id is not None and getattr(user, 'org_role', None) in (ORG_ROLE_ADMIN, ORG_ROLE_BUREAU):
+            q |= Q(suggested_partner__organisation_member_id=org_id)
+        qs = PartnerSuggestion.objects.filter(q).select_related(
+            'incident', 'suggested_by', 'suggested_partner'
+        ).order_by('-created_at')
         status_param = self.request.query_params.get('status')
         if status_param in (SUGGESTION_PENDING, SUGGESTION_ACCEPTED, SUGGESTION_REJECTED):
             qs = qs.filter(status=status_param)
@@ -215,7 +258,8 @@ class PartnerSuggestionDetailView(generics.RetrieveAPIView):
     description=(
         "Accepte une suggestion en attente : crée (ou met à jour) une `Collaboration` "
         "`accepted` pour le partenaire avec le rôle suggéré, et passe la suggestion à "
-        "`accepted`. Réservé au leader (`IsIncidentLeader`)."
+        "`accepted`. Réservé à l'organisation invitée (`suggested_partner`), au leader "
+        "de l'incident ou au super admin."
     ),
     parameters=[
         OpenApiParameter('incident_id', OpenApiTypes.UUID, OpenApiParameter.PATH,
@@ -232,17 +276,24 @@ class PartnerSuggestionDetailView(generics.RetrieveAPIView):
 ))
 class PartnerSuggestionAcceptView(APIView):
     """POST /incidents/<incident_id>/suggestions/<pk>/accept/"""
-    permission_classes = [IsAuthenticated, IsIncidentLeader]
+    permission_classes = [IsAuthenticated]
 
     def post(self, request, incident_id, pk):
         try:
-            suggestion = PartnerSuggestion.objects.get(
+            suggestion = PartnerSuggestion.objects.select_related('incident').get(
                 pk=pk, incident_id=incident_id
             )
         except PartnerSuggestion.DoesNotExist:
             return Response(
                 {"error": "Suggestion non trouvée."},
                 status=status.HTTP_404_NOT_FOUND,
+            )
+
+        if not _can_decide_suggestion(request.user, suggestion):
+            return Response(
+                {"error": "Seule l'organisation invitée (ou le leader) peut "
+                          "répondre à cette invitation."},
+                status=status.HTTP_403_FORBIDDEN,
             )
 
         if suggestion.status != SUGGESTION_PENDING:
@@ -269,7 +320,7 @@ class PartnerSuggestionAcceptView(APIView):
         suggestion.status = SUGGESTION_ACCEPTED
         suggestion.save()
 
-        serializer = PartnerSuggestionSerializer(suggestion)
+        serializer = PartnerSuggestionSerializer(suggestion, context={"request": request})
         return Response(serializer.data, status=status.HTTP_200_OK)
 
 
@@ -278,8 +329,9 @@ class PartnerSuggestionAcceptView(APIView):
     operation_id='suggestions_reject',
     summary="Rejeter une suggestion",
     description=(
-        "Rejette une suggestion en attente : la passe à `rejected`. Réservé au leader "
-        "(`IsIncidentLeader`)."
+        "Rejette une suggestion en attente : la passe à `rejected`. Réservé à "
+        "l'organisation invitée (`suggested_partner`), au leader de l'incident ou au "
+        "super admin."
     ),
     parameters=[
         OpenApiParameter('incident_id', OpenApiTypes.UUID, OpenApiParameter.PATH,
@@ -296,17 +348,24 @@ class PartnerSuggestionAcceptView(APIView):
 ))
 class PartnerSuggestionRejectView(APIView):
     """POST /incidents/<incident_id>/suggestions/<pk>/reject/"""
-    permission_classes = [IsAuthenticated, IsIncidentLeader]
+    permission_classes = [IsAuthenticated]
 
     def post(self, request, incident_id, pk):
         try:
-            suggestion = PartnerSuggestion.objects.get(
+            suggestion = PartnerSuggestion.objects.select_related('incident').get(
                 pk=pk, incident_id=incident_id
             )
         except PartnerSuggestion.DoesNotExist:
             return Response(
                 {"error": "Suggestion non trouvée."},
                 status=status.HTTP_404_NOT_FOUND,
+            )
+
+        if not _can_decide_suggestion(request.user, suggestion):
+            return Response(
+                {"error": "Seule l'organisation invitée (ou le leader) peut "
+                          "répondre à cette invitation."},
+                status=status.HTTP_403_FORBIDDEN,
             )
 
         if suggestion.status != SUGGESTION_PENDING:
@@ -318,5 +377,5 @@ class PartnerSuggestionRejectView(APIView):
         suggestion.status = SUGGESTION_REJECTED
         suggestion.save()
 
-        serializer = PartnerSuggestionSerializer(suggestion)
+        serializer = PartnerSuggestionSerializer(suggestion, context={"request": request})
         return Response(serializer.data, status=status.HTTP_200_OK)
