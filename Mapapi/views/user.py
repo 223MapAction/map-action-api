@@ -680,6 +680,7 @@ class PasswordResetRequestView(generics.CreateAPIView):
         }, status=status.HTTP_201_CREATED)
 
 class PhoneOTPView(generics.CreateAPIView):
+    authentication_classes = []
     permission_classes = ()
     queryset = PhoneOTP.objects.all()
     serializer_class = PhoneOTPSerializer
@@ -692,7 +693,7 @@ class PhoneOTPView(generics.CreateAPIView):
         return otp_code_str
     
     @extend_schema(
-        tags=['Authentification'],
+        # tags=['Authentification'],
         operation_id='auth_phone_otp_get',
         summary="Récupérer le code OTP d'un numéro",
         description="Retourne le dernier code OTP enregistré pour le numéro de "
@@ -721,7 +722,7 @@ class PhoneOTPView(generics.CreateAPIView):
         return Response({'otp_code': otp_instance.otp_code}, status=status.HTTP_200_OK)
     
     @extend_schema(
-        tags=['Authentification'],
+        # tags=['Authentification'],
         operation_id='auth_phone_otp_create',
         summary="Générer et envoyer un code OTP",
         description="Génère un code OTP pour le numéro fourni et l'envoie par "
@@ -747,34 +748,108 @@ class PhoneOTPView(generics.CreateAPIView):
             return Response({'message': 'Erreur lors de l\'envoi du SMS'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 def send_sms(phone_number, otp_code):
-    """Envoi du code OTP par SMS via Twilio (remplace l'ancienne API Orange Mali).
-
-    Twilio est déjà utilisé pour l'IVR (cf. ivr_views.py) ; on réutilise les mêmes
-    identifiants ``TWILIO_*``. Le numéro est normalisé en E.164 (+223 par défaut, Mali).
-    """
+    """Envoi du code OTP par SMS via Orange Mali API."""
     try:
-        from twilio.rest import Client
-        client = Client(settings.TWILIO_ACCOUNT_SID, settings.TWILIO_AUTH_TOKEN)
+        import requests
+        import base64
+        import urllib.parse
 
-        recipient = phone_number if phone_number.startswith('+') else f"+223{phone_number.lstrip('0')}"
+        client_id = getattr(settings, 'ORANGE_CLIENT_ID', None)
+        client_secret = getattr(settings, 'ORANGE_CLIENT_SECRET', None)
+        sender_address = getattr(settings, 'ORANGE_SENDER_ADDRESS', None)
+        sender_name = getattr(settings, 'ORANGE_SENDER_NAME', None) or 'MapAction'
 
-        message = client.messages.create(
-            body=f"Votre code de vérification OTP est : {otp_code}",
-            from_=settings.TWILIO_PHONE_NUMBER,
-            to=recipient,
-        )
+        if not client_id or not client_secret or not sender_address:
+            print("Erreur: Configurations Orange Mali (ORANGE_CLIENT_ID, ORANGE_CLIENT_SECRET, ORANGE_SENDER_ADDRESS) manquantes.")
+            return False
 
-        if message.sid:
-            print(f"SMS OTP envoyé via Twilio. SID: {message.sid}")
-            return True
-        print("Erreur: pas de SID retourné par Twilio")
-        return False
+        # 1. Obtenir le token OAuth
+        token_url = "https://api.orange.com/oauth/v3/token"
+        auth_header = base64.b64encode(f"{client_id}:{client_secret}".encode('utf-8')).decode('utf-8')
+        headers_token = {
+            "Authorization": f"Basic {auth_header}",
+            "Content-Type": "application/x-www-form-urlencoded"
+        }
+        data_token = {
+            "grant_type": "client_credentials"
+        }
+        token_response = requests.post(token_url, headers=headers_token, data=data_token, timeout=10)
+        token_response.raise_for_status()
+        token_data = token_response.json()
+        access_token = token_data.get("access_token")
+
+        if not access_token:
+            print("Erreur: Impossible d'obtenir le token d'accès Orange.")
+            return False
+
+        # Normaliser le numéro destinataire : format requis = tel:+223xxxxxxxx
+        clean_phone = phone_number.strip().replace(" ", "").replace("-", "")
+        if clean_phone.startswith('+'):
+            clean_phone = clean_phone[1:]
+        elif clean_phone.startswith('00'):
+            clean_phone = clean_phone[2:]
+        
+        # S'assurer que le numéro commence par le code pays du Mali (223) si non présent
+        if not clean_phone.startswith('223'):
+            clean_phone = f"223{clean_phone.lstrip('0')}"
+            
+        recipient = f"tel:+{clean_phone}"
+
+        # S'assurer que l'adresse de l'expéditeur commence par tel:
+        sender = sender_address.strip()
+        if not sender.startswith('tel:'):
+            sender = f"tel:{sender}"
+
+        encoded_sender = urllib.parse.quote(sender)
+
+        # 2. Envoyer le SMS
+        sms_url = f"https://api.orange.com/smsmessaging/v1/outbound/{encoded_sender}/requests"
+        headers_sms = {
+            "Authorization": f"Bearer {access_token}",
+            "Content-Type": "application/json"
+        }
+        
+        # Construction du payload
+        outbound_request = {
+            "address": [recipient],
+            "senderAddress": sender,
+            "outboundSMSTextMessage": {
+                "message": f"Votre code de vérification OTP est : {otp_code}"
+            }
+        }
+
+        # Orange impose des restrictions strictes sur le senderName :
+        # 11 caractères maximum, uniquement des caractères alphanumériques et espaces.
+        # De plus, le nom doit être pré-enregistré/approuvé sur le contrat de l'API.
+        if sender_name:
+            stripped_sender_name = sender_name.strip()
+            if len(stripped_sender_name) <= 11 and all(c.isalnum() or c.isspace() for c in stripped_sender_name):
+                outbound_request["senderName"] = stripped_sender_name
+            else:
+                print(f"Warning: Le senderName '{sender_name}' a été omis car il ne respecte pas les critères d'Orange (max 11 caractères, caractères alphanumériques et espaces autorisés).")
+
+        payload = {
+            "outboundSMSMessageRequest": outbound_request
+        }
+
+        sms_response = requests.post(sms_url, json=payload, headers=headers_sms, timeout=10)
+        if sms_response.status_code >= 400:
+            print(f"Détail de l'erreur Orange Mali ({sms_response.status_code}): {sms_response.text}")
+        sms_response.raise_for_status()
+        
+        print(f"SMS OTP envoyé via Orange Mali à {recipient}.")
+        return True
+
     except Exception as e:
-        print(f"Erreur lors de l'envoi SMS Twilio: {str(e)}")
+        print(f"Erreur lors de l'envoi SMS Orange Mali: {str(e)}")
+        if hasattr(e, 'response') and e.response is not None:
+            print(f"Corps de la réponse d'erreur: {e.response.text}")
         return False
     
 
 class RegisterView(generics.CreateAPIView):
+    authentication_classes = []
+    permission_classes = []
     serializer_class = RegisterSerializer
 
     @extend_schema(
@@ -854,9 +929,12 @@ class SetPasswordView(generics.UpdateAPIView):
     
 
 class RequestOTPView(APIView):
+    authentication_classes = []
+    permission_classes = []
+
     @extend_schema(
-        tags=['Authentification'],
-        operation_id='auth_otp_request',
+        # tags=['Authentification'],
+        # operation_id='auth_otp_request',
         summary="Demander un OTP (téléphone)",
         description="Crée ou récupère l'utilisateur par numéro de téléphone, "
                     "génère un OTP et l'envoie par SMS. Endpoint public.",
@@ -884,9 +962,12 @@ class RequestOTPView(APIView):
             return Response({"message": "Erreur lors de l'envoi du SMS"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 class VerifyOTPView(APIView):
+    authentication_classes = []
+    permission_classes = []
+
     @extend_schema(
-        tags=['Authentification'],
-        operation_id='auth_otp_verify',
+        # tags=['Authentification'],
+        # operation_id='auth_otp_verify',
         summary="Vérifier un OTP (téléphone)",
         description="Vérifie le couple téléphone/OTP ; si valide, retourne des "
                     "tokens JWT et les informations de l'utilisateur. Endpoint public.",
