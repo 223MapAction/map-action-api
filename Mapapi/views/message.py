@@ -443,6 +443,11 @@ class DiscussionMessageView(generics.ListCreateAPIView):
         except Incident.DoesNotExist:
             raise NotFound("Incident introuvable.")
 
+        # --- Cas de l'agent de terrain assigné à l'incident ---
+        from Mapapi.models import IncidentAssignment
+        if IncidentAssignment.objects.filter(incident=incident, agent=user).exists():
+            return Collaboration.objects.filter(incident=incident, user=user).first()
+
         # --- Mode INTERNAL : restreint aux membres de l'org propriétaire ---
         if incident.take_in_charge_mode == 'internal':
             owner = incident.taken_by
@@ -559,12 +564,16 @@ class DiscussionMessageView(generics.ListCreateAPIView):
         user = self.request.user
 
         # Le super admin peut poster sans être collaborateur ; sinon on exige
-        # une collaboration acceptée.
+        # une collaboration acceptée ou une assignation agent.
         if is_super_admin(user):
             incident = Incident.objects.get(pk=incident_id)
+            collaboration = None
         else:
             collaboration = self._get_user_collaboration(incident_id, user)
-            incident = collaboration.incident
+            if collaboration:
+                incident = collaboration.incident
+            else:
+                incident = Incident.objects.get(pk=incident_id)
 
         if incident.etat == "resolved":
             raise ValidationError("Cet incident est résolu, la discussion est terminée.")
@@ -585,3 +594,28 @@ class DiscussionMessageView(generics.ListCreateAPIView):
             collaboration=collaboration,
             recipient=recipient,
         )
+
+
+class DiscussionMessageDetailView(generics.RetrieveUpdateDestroyAPIView):
+    """
+    Détail, modification (PUT/PATCH) ou suppression (DELETE) d'un message de discussion.
+    
+    L'accès est réservé à l'auteur du message (sender) ou au super-admin.
+    La modification et suppression sont interdites si l'incident est résolu.
+    """
+    queryset = DiscussionMessage.objects.all()
+    serializer_class = DiscussionMessageSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_object(self):
+        obj = super().get_object()
+        # Seul l'auteur ou le super admin a le droit d'accéder/modifier/supprimer
+        if obj.sender != self.request.user and not is_super_admin(self.request.user):
+            raise PermissionDenied("Vous n'êtes pas l'auteur de ce message.")
+        
+        # Bloquer la modification/suppression si l'incident associé est résolu
+        if self.request.method in ['PUT', 'PATCH', 'DELETE']:
+            if obj.incident.etat == "resolved":
+                raise ValidationError("Cet incident est résolu, la discussion ne peut plus être modifiée.")
+        
+        return obj

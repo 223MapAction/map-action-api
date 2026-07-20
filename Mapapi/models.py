@@ -548,6 +548,7 @@ class IncidentAssignment(UUIDModel):
     agent = models.ForeignKey(User, on_delete=models.CASCADE, related_name='incident_assignments')
     assigned_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='created_incident_assignments')
     deadline = models.DateTimeField()
+    description = models.TextField(null=True, blank=True)
     status = models.CharField(max_length=20, choices=ASSIGNMENT_STATUSES, default=ASSIGNMENT_PENDING)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -1190,7 +1191,7 @@ class UserAction(UUIDModel):
     
 class DiscussionMessage(UUIDModel):
     incident = models.ForeignKey('Incident', on_delete=models.CASCADE)
-    collaboration = models.ForeignKey(Collaboration, on_delete=models.CASCADE)
+    collaboration = models.ForeignKey(Collaboration, on_delete=models.CASCADE, null=True, blank=True)
     sender = models.ForeignKey(User, on_delete=models.CASCADE)
     # message texte (peut être vide si le message ne contient qu'un audio ou une pièce jointe)
     message = models.TextField(blank=True, null=True)
