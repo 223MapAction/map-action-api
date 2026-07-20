@@ -178,6 +178,7 @@ urlpatterns = [
     path('collaborations/accept/', AcceptCollaborationView.as_view(), name='accept-collaboration'),
     path('collaboration/<uuid:collaboration_id>/<str:action>/', HandleCollaborationRequestView.as_view(), name="handle_collaboration_request"),
     path('discussion/<uuid:incident_id>/', DiscussionMessageView.as_view(), name='discussion'),
+    path('discussion/message/<uuid:pk>/', DiscussionMessageDetailView.as_view(), name='discussion-detail'),
 
     # Search Incident
     path('Search/', IncidentSearchView.as_view(), name="search"),

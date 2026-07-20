@@ -216,9 +216,9 @@ class FieldReportAdmin(admin.ModelAdmin):
 
 @admin.register(IncidentAssignment)
 class IncidentAssignmentAdmin(admin.ModelAdmin):
-    list_display = ['id', 'incident', 'agent', 'assigned_by', 'deadline', 'status', 'created_at']
+    list_display = ['id', 'incident', 'agent', 'assigned_by', 'deadline', 'status', 'description', 'created_at']
     list_filter = ['status', 'deadline', 'created_at']
-    search_fields = ['incident__title', 'agent__email', 'assigned_by__email']
+    search_fields = ['incident__title', 'agent__email', 'assigned_by__email', 'description']
     readonly_fields = ['created_at', 'updated_at']
 
 

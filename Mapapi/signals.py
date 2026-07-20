@@ -58,17 +58,30 @@ def ws_push_notification(sender, instance, created, **kwargs):
 
 @receiver(post_save, sender=DiscussionMessage)
 def ws_push_discussion(sender, instance, created, **kwargs):
-    """Temps réel : pousse chaque message de discussion aux membres de l'incident."""
-    if kwargs.get('raw') or not created:
+    """Temps réel : pousse chaque message de discussion (création ou modification) aux membres de l'incident."""
+    if kwargs.get('raw'):
         return
+    event_name = 'discussion_message' if created else 'discussion_message_updated'
     _ws_broadcast(f"discussion_{instance.incident_id}", {
-        'event': 'discussion_message',
+        'event': event_name,
         'id': instance.id,
         'incident': instance.incident_id,
         'collaboration': instance.collaboration_id,
         'sender': instance.sender_id,
         'message': instance.message,
         'created_at': instance.created_at.isoformat() if instance.created_at else None,
+    })
+
+
+@receiver(post_delete, sender=DiscussionMessage)
+def ws_push_discussion_deleted(sender, instance, **kwargs):
+    """Temps réel : pousse la suppression d'un message aux membres de l'incident."""
+    if kwargs.get('raw'):
+        return
+    _ws_broadcast(f"discussion_{instance.incident_id}", {
+        'event': 'discussion_message_deleted',
+        'id': instance.id,
+        'incident': instance.incident_id,
     })
 
 

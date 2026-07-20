@@ -39,7 +39,7 @@ from ..permissions import (
     IsIncidentLeader, IsSuperAdminOrOrgOwnIncident, IsSuperAdmin,
     IsOrgAdmin, IsAgentBureau, IsOrgOperative, IsSuperAdminRole,
 )
-from ..roles import is_org_admin
+from ..roles import is_org_admin, is_super_admin
 from ..tasks import analyze_incident_with_model_task
 from ..Send_mails import send_email
 import logging
@@ -55,18 +55,25 @@ from .. import roles as web_roles
 def visible_incidents_qs(base_qs, user):
     """Incidents visibles dans les listes incident.
 
-    Décision produit (2026-07) : TOUT utilisateur authentifié — super_admin,
-    org_admin, agent de terrain, etc. — voit l'ENSEMBLE des incidents dans les
-    listes (cohérent avec le total affiché sur le dashboard). Les appels NON
-    authentifiés (endpoints publics) restent limités aux incidents publics pour
-    ne pas exposer les incidents internes (is_public=False).
+    Restreint les incidents signalés par les agents de terrain aux membres de
+    leur propre organisation et aux super-admins.
     """
-    # Les incidents en corbeille (is_deleted) ne figurent jamais dans les listes
-    # (cohérent avec le total du dashboard, qui exclut aussi la corbeille).
     base_qs = base_qs.filter(is_deleted=False)
     if user and getattr(user, 'is_authenticated', False):
-        return base_qs
-    return base_qs.filter(is_public=True)
+        if is_super_admin(user):
+            return base_qs
+        org = getattr(user, 'organisation_member', None)
+        if org:
+            return base_qs.filter(
+                Q(user_id__org_role=None) | ~Q(user_id__org_role=ORG_ROLE_FIELD) | Q(user_id__organisation_member=org)
+            )
+        else:
+            return base_qs.filter(
+                Q(user_id__org_role=None) | ~Q(user_id__org_role=ORG_ROLE_FIELD)
+            )
+    return base_qs.filter(is_public=True).filter(
+        Q(user_id__org_role=None) | ~Q(user_id__org_role=ORG_ROLE_FIELD)
+    )
 
 
 # Correspondance code pays (front / `intervention_country`) -> noms géocodés
@@ -265,8 +272,10 @@ class IncidentAPIView(generics.CreateAPIView):
             # organisation (select_related) en une requête au lieu d'une requête
             # organisation par assignation, et les catégories (M2M). Sur un pooler
             # distant chaque aller-retour compte (≈80 ms) : 4 requêtes → 3.
+            base = Incident.objects.all()
+            base = visible_incidents_qs(base, request.user)
             item = (
-                Incident.objects
+                base
                 .select_related('taken_by__organisation_member')
                 .prefetch_related(
                     Prefetch(
@@ -285,7 +294,9 @@ class IncidentAPIView(generics.CreateAPIView):
 
     def put(self, request, id, format=None):
         try:
-            item = Incident.objects.get(pk=id)
+            base = Incident.objects.all()
+            base = visible_incidents_qs(base, request.user)
+            item = base.get(pk=id)
         except Incident.DoesNotExist:
             return Response(status=404)
         serializer = IncidentSerializer(item, data=request.data)
@@ -318,7 +329,9 @@ class IncidentAPIView(generics.CreateAPIView):
 
     def delete(self, request, id, format=None):
         try:
-            item = Incident.objects.get(pk=id)
+            base = Incident.objects.all()
+            base = visible_incidents_qs(base, request.user)
+            item = base.get(pk=id)
         except Incident.DoesNotExist:
             return Response(status=404)
         
