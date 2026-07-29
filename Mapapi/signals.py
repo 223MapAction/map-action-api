@@ -184,6 +184,12 @@ def ws_push_collaboration(sender, instance, created, **kwargs):
         # L'acteur (nom + organisation) est exposé séparément par ActivityFeedSerializer
         # (user_name / organisation_name) ; le texte de l'action ne le répète donc pas.
         incident_title = getattr(getattr(instance, 'incident', None), 'title', None) or "un incident"
+        # Le flux d'activité est INTER-ORGANISATIONS : on n'y publie jamais le
+        # travail interne d'une org (incident en mode interne ou signalé par un de
+        # ses agents de terrain), sinon son titre fuite chez toutes les autres.
+        inc_obj = getattr(instance, 'incident', None)
+        if inc_obj is not None and inc_obj.is_activity_private:
+            return
         # Une collaboration de rôle « leader » déjà acceptée n'est PAS une demande :
         # c'est la prise en charge de l'incident par l'organisation (créée
         # automatiquement lors du take-in-charge, ou du signalement par un agent de

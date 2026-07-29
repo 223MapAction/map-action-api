@@ -1800,9 +1800,14 @@ class HandleIncidentView(APIView):
 
         incident.save()
 
-        user_action = UserAction.objects.create(user=user, action=action_message)
+        # Travail interne d'une organisation : pas de publication dans le flux
+        # d'activité inter-organisations (cf. Incident.is_activity_private).
+        user_action = (
+            None if incident.is_activity_private
+            else UserAction.objects.create(user=user, action=action_message)
+        )
         user_data = UserSerializer(user).data
-        action_data = UserActionSerializer(user_action).data 
+        action_data = UserActionSerializer(user_action).data if user_action else None
         return Response({
             "status": "success",
             "message": action_message,
@@ -1938,7 +1943,8 @@ class TakeInChargeView(APIView):
             )
 
             action_message = f"a pris en charge l'incident «{incident.title}» en mode interne."
-            UserAction.objects.create(user=request.user, action=action_message)
+            # Mode INTERNE = travail privé de l'organisation : jamais publié dans le
+            # flux inter-organisations (fuitait le titre de l'incident interne).
 
             return Response({
                 "status": "success",
@@ -2011,7 +2017,8 @@ class TakeInChargeView(APIView):
             ).exclude(user=request.user).update(status='pending')
 
             action_message = f"a pris en charge l'incident «{incident.title}» en tant que leader (mode collaboratif)."
-            UserAction.objects.create(user=request.user, action=action_message)
+            if not incident.is_activity_private:
+                UserAction.objects.create(user=request.user, action=action_message)
 
             return Response({
                 "status": "success",
@@ -2042,7 +2049,8 @@ class TakeInChargeView(APIView):
 
         role_fr = {'contributor': 'contributeur', 'observer': 'observateur', 'leader': 'leader'}.get(role, role)
         action_message = f"a rejoint l'incident «{incident.title}» en tant que {role_fr}."
-        UserAction.objects.create(user=request.user, action=action_message)
+        if not incident.is_activity_private:
+            UserAction.objects.create(user=request.user, action=action_message)
 
         return Response({
             "status": "success",
