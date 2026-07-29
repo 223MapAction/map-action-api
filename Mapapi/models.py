@@ -772,6 +772,23 @@ class Incident(UUIDModel):
             return self.user_id.org_role == 'field_agent'
         return False
 
+    @property
+    def is_activity_private(self):
+        """True si l'activité liée à cet incident ne doit PAS être publiée dans le
+        flux d'activité inter-organisations (`/activity-feed/`).
+
+        Deux cas relèvent du travail INTERNE d'une organisation et ne regardent
+        donc pas les autres :
+          - incident pris en charge en mode ``internal`` ;
+          - incident signalé par un agent de terrain (signalement interne à l'org).
+
+        Le flux d'activité reste inter-organisations pour tout le reste (mode
+        collaboratif, signalements citoyens) : c'est sa raison d'être.
+        """
+        if (self.take_in_charge_mode or '').lower() == 'internal':
+            return True
+        return self.reported_by_agent
+
 
 class Evenement(UUIDModel):
     title = models.CharField(max_length=255, blank=True,
