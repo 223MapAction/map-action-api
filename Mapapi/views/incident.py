@@ -1346,9 +1346,19 @@ class IncidentFilterView(APIView):
 
         # Carte du dashboard : on ne tire que les colonnes scalaires utiles aux
         # marqueurs (cf. IncidentMapSerializer) pour éviter le N+1 d'IncidentSerializer.
-        incidents = Incident.objects.only(
-            'id', 'title', 'lattitude', 'longitude', 'etat', 'taken_by',
-            'is_deleted', 'severity', 'created_at',
+        #
+        # `visible_incidents_qs` applique la MÊME portée que la liste /incident/ :
+        #   - exclut les incidents supprimés (is_deleted=True) — sinon la carte
+        #     renvoyait titres et coordonnées d'incidents effacés ;
+        #   - restreint les incidents signalés par un agent de terrain aux membres
+        #     de SON organisation — sinon les signalements internes d'une org
+        #     fuitaient sur la carte de toutes les autres.
+        incidents = visible_incidents_qs(
+            Incident.objects.only(
+                'id', 'title', 'lattitude', 'longitude', 'etat', 'taken_by',
+                'is_deleted', 'severity', 'created_at',
+            ),
+            request.user,
         )
 
         # --- Scope (orthogonal au filtre de date ci-dessous) ---
