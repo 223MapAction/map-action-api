@@ -6,7 +6,7 @@ from django.core.serializers.json import DjangoJSONEncoder
 from asgiref.sync import async_to_sync
 from channels.layers import get_channel_layer
 from .models import (Collaboration, Notification, User, DiscussionMessage, IncidentTask,
-                     UserAction, COLLAB_ROLE_LEADER)
+                     UserAction, COLLAB_ROLE_LEADER, COLLAB_STATUS_ACCEPTED)
 
 
 def _actor_label(user):
@@ -184,7 +184,16 @@ def ws_push_collaboration(sender, instance, created, **kwargs):
         # L'acteur (nom + organisation) est exposé séparément par ActivityFeedSerializer
         # (user_name / organisation_name) ; le texte de l'action ne le répète donc pas.
         incident_title = getattr(getattr(instance, 'incident', None), 'title', None) or "un incident"
-        if created:
+        # Une collaboration de rôle « leader » déjà acceptée n'est PAS une demande :
+        # c'est la prise en charge de l'incident par l'organisation (créée
+        # automatiquement lors du take-in-charge, ou du signalement par un agent de
+        # terrain). La journaliser comme « a demandé une collaboration » publiait une
+        # activité fausse et trompeuse pour chaque incident interne.
+        is_auto_leader = (
+            instance.role == COLLAB_ROLE_LEADER
+            and instance.status == COLLAB_STATUS_ACCEPTED
+        )
+        if created and not is_auto_leader:
             UserAction.objects.create(
                 user=instance.user,
                 action=f"a demandé une collaboration sur l'incident «{incident_title}»."[:255],
