@@ -7,3 +7,5 @@ class MapapiConfig(AppConfig):
 
     def ready(self):
         from . import signals
+        from .firebase_app import init_firebase
+        init_firebase()

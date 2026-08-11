@@ -16,7 +16,7 @@ from django.db import transaction
 from django.utils import timezone
 
 from Mapapi.models import (
-    Prediction, PredictionStatus, Incident, Collaboration, Notification,
+    Prediction, PredictionStatus, Incident, Collaboration, Notification, User,
     IN_VALIDATION, RESOLVED_DEFINITIVE, TAKEN, DECLARED,
     COLLAB_STATUS_ACCEPTED, COLLAB_STATUS_TERMINATED,
     IncidentOrgAssignment, ORG_ASSIGNMENT_PENDING, ORG_ASSIGNMENT_ACCEPTED,
@@ -432,5 +432,33 @@ def auto_accept_overdue_assignments():
 #     return prediction, longitude, context, in_depth, piste_solution
 
 
+@shared_task
+def send_push_notification_task(user_id, title, body, data=None):
+    from firebase_admin import messaging
+    from firebase_admin.exceptions import FirebaseError
 
+    try:
+        user = User.objects.get(pk=user_id)
+    except User.DoesNotExist:
+        logger.warning(f"Push notification ignorée : utilisateur {user_id} introuvable.")
+        return
 
+    token = user.fcm_token
+    if not token:
+        logger.warning(f"Push notification ignorée : utilisateur {user_id} sans fcm_token.")
+        return
+
+    message = messaging.Message(
+        notification=messaging.Notification(title=title, body=body),
+        data={k: str(v) for k, v in (data or {}).items()},
+        token=token,
+    )
+    try:
+        response = messaging.send(message)
+        logger.info(f"Push envoyé à l'utilisateur {user_id} (message_id={response}).")
+    except (messaging.UnregisteredError, messaging.SenderIdMismatchError):
+        logger.warning(f"Token FCM invalide/expiré pour l'utilisateur {user_id}, suppression.")
+        user.fcm_token = None
+        user.save(update_fields=['fcm_token'])
+    except FirebaseError as e:
+        logger.error(f"Erreur FCM lors de l'envoi à l'utilisateur {user_id} : {str(e)}")

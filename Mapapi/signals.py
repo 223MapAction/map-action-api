@@ -6,7 +6,8 @@ from django.core.serializers.json import DjangoJSONEncoder
 from asgiref.sync import async_to_sync
 from channels.layers import get_channel_layer
 from .models import (Collaboration, Notification, User, DiscussionMessage, IncidentTask,
-                     UserAction, COLLAB_ROLE_LEADER, COLLAB_STATUS_ACCEPTED)
+                     UserAction, COLLAB_ROLE_LEADER, COLLAB_STATUS_ACCEPTED,
+                     Incident, TAKEN, RESOLVED, RESOLVED_DEFINITIVE, NOTIF_TYPE_TITLES)
 
 
 def _actor_label(user):
@@ -306,3 +307,54 @@ def notify_organisations_on_prediction(sender, instance, created, **kwargs):
 
         except Exception as e:
             logger.error(f"Erreur lors de l'envoi d'une notification à {org.email} : {str(e)}")
+
+
+@receiver(pre_save, sender=Incident)
+def _capture_incident_old_etat(sender, instance, **kwargs):
+    """Capture l'ancien état pour détecter les transitions dans le post_save."""
+    if instance.pk:
+        instance._old_etat = Incident.objects.filter(pk=instance.pk).values_list('etat', flat=True).first()
+    else:
+        instance._old_etat = None
+
+
+@receiver(post_save, sender=Incident)
+def notify_citizen_on_incident_status_change(sender, instance, created, **kwargs):
+    """Notifie le citoyen à l'origine du signalement (in-app + push FCM) quand son
+    incident passe en « pris en compte » ou « résolu »."""
+    if kwargs.get('raw') or created:
+        return
+    old_etat = getattr(instance, '_old_etat', None)
+    if old_etat == instance.etat:
+        return
+
+    citizen = instance.user_id  # FK vers le citoyen ayant signalé l'incident
+    if not citizen:
+        return
+
+    if instance.etat == TAKEN and old_etat != TAKEN:
+        notif_type = 'incident_taken_into_account'
+        titre = instance.title or instance.zone
+        message = f"Votre incident «{titre}» a été pris en compte."[:255]
+    elif instance.etat in (RESOLVED, RESOLVED_DEFINITIVE) and old_etat not in (RESOLVED, RESOLVED_DEFINITIVE):
+        notif_type = 'incident_resolved'
+        titre = instance.title or instance.zone
+        message = f"Votre incident «{titre}» a été résolu."[:255]
+    else:
+        return
+
+    try:
+        Notification.objects.create(
+            user=citizen,
+            notif_type=notif_type,
+            message=message,
+            incident=instance,
+        )
+    except Exception as exc:  # ne jamais casser l'écriture DB
+        logger.warning("notification changement d'état incident échouée: %s", exc)
+
+    from .tasks import send_push_notification_task
+    send_push_notification_task.delay(
+        str(citizen.id), NOTIF_TYPE_TITLES[notif_type], message,
+        data={"incident_id": str(instance.id)},
+    )
