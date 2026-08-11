@@ -575,3 +575,9 @@ MODEL_DEPLOY_CHAT_URL = os.environ.get(
     'http://localhost:8001/chat',
 )
 MODEL_DEPLOY_CHAT_TIMEOUT = int(os.environ.get('MODEL_DEPLOY_CHAT_TIMEOUT', 120))
+
+# Firebase Cloud Messaging (push notifications). Cf. Mapapi/firebase_app.py
+# pour l'ordre de priorité entre ces trois variables.
+FCM_CREDENTIALS_PATH = os.environ.get('FCM_CREDENTIALS_PATH')
+FCM_CREDENTIALS_JSON_BASE64 = os.environ.get('FCM_CREDENTIALS_JSON_BASE64')
+FCM_CREDENTIALS_JSON = os.environ.get('FCM_CREDENTIALS_JSON')

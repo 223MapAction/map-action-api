@@ -71,6 +71,7 @@ jobs:
             echo "MODEL_DEPLOY_TIMEOUT=${{ secrets.MODEL_DEPLOY_TIMEOUT }}"
             echo "MODEL_DEPLOY_CHAT_URL=${{ secrets.MODEL_DEPLOY_CHAT_URL }}"
             echo "MODEL_DEPLOY_CHAT_TIMEOUT=${{ secrets.MODEL_DEPLOY_CHAT_TIMEOUT }}"
+            echo "FCM_CREDENTIALS_JSON_BASE64=${{ secrets.FCM_CREDENTIALS_JSON_BASE64 }}"
           } > .env
 
       - name: Build and Deploy Docker Image

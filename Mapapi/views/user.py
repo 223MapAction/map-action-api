@@ -747,8 +747,8 @@ class PhoneOTPView(generics.CreateAPIView):
         else:
             return Response({'message': 'Erreur lors de l\'envoi du SMS'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-def send_sms(phone_number, otp_code):
-    """Envoi du code OTP par SMS via Orange Mali API."""
+def send_sms(phone_number, otp_code, custom_message=None):
+    """Envoi du code OTP ou d'un message personnalisé par SMS via Orange Mali API."""
     try:
         import requests
         import base64
@@ -810,11 +810,12 @@ def send_sms(phone_number, otp_code):
         }
         
         # Construction du payload
+        message_text = custom_message if custom_message else f"Votre code de vérification OTP est : {otp_code}"
         outbound_request = {
             "address": [recipient],
             "senderAddress": sender,
             "outboundSMSTextMessage": {
-                "message": f"Votre code de vérification OTP est : {otp_code}"
+                "message": message_text
             }
         }
 
@@ -1028,4 +1029,61 @@ class VerifyOTPView(APIView):
                 return Response({"message": "OTP invalide ou expiré"}, status=status.HTTP_400_BAD_REQUEST)
         except User.DoesNotExist:
             return Response({"message": "Utilisateur non trouvé"}, status=status.HTTP_404_NOT_FOUND)
+
+
+@extend_schema_view(
+    post=extend_schema(
+        tags=['Utilisateurs & Profil'],
+        operation_id='users_update_fcm_token',
+        summary="Enregistrer le token FCM de l'appareil",
+        description="Enregistre (ou met à jour) le token Firebase Cloud Messaging de "
+                    "l'appareil de l'utilisateur connecté, utilisé pour l'envoi des "
+                    "notifications push.",
+        request=inline_serializer(
+            name='UpdateFCMTokenRequest',
+            fields={'fcm_token': serializers.CharField()},
+        ),
+        responses={
+            200: inline_serializer(
+                name='UpdateFCMTokenResponse',
+                fields={'status': serializers.CharField(), 'message': serializers.CharField()},
+            ),
+            400: OpenApiResponse(description="fcm_token manquant."),
+        },
+    ),
+    put=extend_schema(
+        tags=['Utilisateurs & Profil'],
+        operation_id='users_update_fcm_token_put',
+        summary="Enregistrer le token FCM de l'appareil",
+        description="Alias PUT de l'enregistrement du token FCM.",
+        request=inline_serializer(
+            name='UpdateFCMTokenRequestPut',
+            fields={'fcm_token': serializers.CharField()},
+        ),
+        responses={
+            200: inline_serializer(
+                name='UpdateFCMTokenResponsePut',
+                fields={'status': serializers.CharField(), 'message': serializers.CharField()},
+            ),
+            400: OpenApiResponse(description="fcm_token manquant."),
+        },
+    ),
+)
+class UpdateFCMTokenView(APIView):
+    permission_classes = (IsAuthenticated,)
+
+    def _update(self, request):
+        fcm_token = request.data.get('fcm_token')
+        if not fcm_token:
+            return Response({"message": "fcm_token requis"}, status=status.HTTP_400_BAD_REQUEST)
+
+        request.user.fcm_token = fcm_token
+        request.user.save(update_fields=['fcm_token'])
+        return Response({"status": "success", "message": "Token FCM enregistré"}, status=status.HTTP_200_OK)
+
+    def post(self, request, *args, **kwargs):
+        return self._update(request)
+
+    def put(self, request, *args, **kwargs):
+        return self._update(request)
 

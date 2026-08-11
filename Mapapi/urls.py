@@ -20,6 +20,7 @@ from .views.incident import (
     BulkForceDeleteIncidentsView,
     IncidentPredictionView, RetryIncidentPredictionView,
     IncidentChatView, AgentPinLoginView, AgentChangePinView,
+    AgentRequestResetPinView, AgentResetPinLinkView,
     PrepareResolutionView, ReturnForCompletionView, DeclareResolvedView,
     DisengageIncidentView,
     ValidateResolutionView, RejectResolutionView, ReportToAdminView,
@@ -114,6 +115,8 @@ urlpatterns = [
     path('agent-login/', AgentCodeLoginView.as_view(), name='agent-login'),
     path('agent-pin-login/', AgentPinLoginView.as_view(), name='agent-pin-login'),
     path('agent/change-pin/', AgentChangePinView.as_view(), name='agent-change-pin'),
+    path('agent/request-reset-pin/', AgentRequestResetPinView.as_view(), name='agent-request-reset-pin'),
+    path('agent/reset-pin-link/<str:token>/', AgentResetPinLinkView.as_view(), name='agent-reset-pin-link'),
     # URL for views Events
     path('Event/<uuid:id>', EvenementAPIView.as_view(), name='event'),
     path('Event/', EvenementAPIListView.as_view(), name='event'),
@@ -192,6 +195,8 @@ urlpatterns = [
     path('notifications/<uuid:pk>/', NotificationViewSet.as_view({'get': 'retrieve', 'patch': 'partial_update'}), name="notification-detail"),
     path('activity-feed/', ActivityFeedView.as_view(), name="activity-feed"),
     path('activity-feed/mark-seen/', ActivityFeedMarkSeenView.as_view(), name="activity-feed-mark-seen"),
+    # FCM push notifications
+    path('users/fcm-token/', UpdateFCMTokenView.as_view(), name="update-fcm-token"),
     path('agents/stats/', AgentStatsView.as_view(), name="agents-stats"),
     path('agents/', AgentListView.as_view(), name="agents-list"),
     path('hadleIncident/<uuid:incident_id>', HandleIncidentView.as_view(), name="handle"),

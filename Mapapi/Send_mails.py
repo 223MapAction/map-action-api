@@ -20,3 +20,18 @@ def send_email(subject, template_name, context, to_email):
     except Exception as e:
         logger.error(f"Erreur lors de l'envoi de l'email: {str(e)}")
         raise e
+
+
+@shared_task
+def send_sms_task(phone_number, otp_code, custom_message=None):
+    logger.info(f"Début de l'envoi de SMS à {phone_number}.")
+    try:
+        from Mapapi.views.user import send_sms
+        result = send_sms(phone_number, otp_code, custom_message)
+        if result:
+            logger.info(f"SMS envoyé avec succès à {phone_number}.")
+        else:
+            logger.error(f"Échec de l'envoi du SMS à {phone_number}.")
+    except Exception as e:
+        logger.error(f"Erreur lors de l'envoi du SMS: {str(e)}")
+        raise e

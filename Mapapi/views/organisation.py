@@ -702,12 +702,25 @@ class FieldAgentCreateView(APIView):
             email_error = str(e)
             logger.error(f"Erreur envoi email PIN à {member.email}: {e}", exc_info=True)
 
+        # Envoi du SMS avec le PIN et numéro
+        sms_sent = False
+        if member.phone:
+            try:
+                from Mapapi.Send_mails import send_sms_task
+                sms_text = f"Bienvenue sur Map Action ! Votre compte Agent de terrain a été créé. Connectez-vous avec votre numéro {member.phone} et votre code PIN temporaire : {initial_pin}."
+                send_sms_task.delay(member.phone, initial_pin, sms_text)
+                sms_sent = True
+                logger.info(f"SMS PIN mis en file d'attente (Celery) pour l'agent {member.phone}")
+            except Exception as e:
+                logger.error(f"Erreur envoi SMS PIN à {member.phone}: {e}", exc_info=True)
+
         serializer = OrganisationMemberSerializer(member)
         response_data = serializer.data
         response_data.update({
             'initial_pin': initial_pin,
             'must_change_pin': member.must_change_pin,
             'email_sent': email_sent,
+            'sms_sent': sms_sent,
         })
         if email_error:
             response_data['email_error'] = email_error
@@ -1045,7 +1058,7 @@ class StaffAccountCreateView(APIView):
             last_name=last_name,
             phone=phone or None,
             address=address or None,
-            user_type='admin' if org_role == ORG_ROLE_ADMIN else 'citizen',
+            user_type='admin',
             org_role=org_role,
             organisation_member=org,
             is_active=True,

@@ -428,6 +428,8 @@ class User(AbstractBaseUser, PermissionsMixin):
     # Dernière consultation du flux d'activité (vues/non-vues) : tout élément du
     # flux postérieur à cette date est considéré « non vu » par l'utilisateur.
     activity_seen_at = models.DateTimeField(blank=True, null=True)
+    fcm_token = models.CharField(max_length=255, null=True, blank=True,
+                                 help_text="Token Firebase Cloud Messaging de l'appareil de l'utilisateur.")
     objects = UserManager()
 
     USERNAME_FIELD = 'email'
@@ -943,7 +945,9 @@ class Indicateur(UUIDModel):
 
 
 class PasswordReset(UUIDModel):
-    code = models.CharField(max_length=7, blank=False, null=False)
+    # 7 chars pour les codes courts saisis à la main (PasswordResetRequestView) ;
+    # 64 pour les tokens longs de lien à usage unique (AgentRequestResetPinView, uuid4).
+    code = models.CharField(max_length=64, blank=False, null=False)
     user = models.ForeignKey(settings.AUTH_USER_MODEL, blank=False, null=False, on_delete=models.CASCADE)
     date_created = models.DateTimeField(auto_now_add=True)
     used = models.BooleanField(default=False)
@@ -1110,6 +1114,8 @@ NOTIF_TYPE_TITLES = {
     'deadline_warning': 'Alerte délai',
     'incident_report': 'Nouvel incident signalé',
     'incident_assignment': 'Incident assigné',
+    'incident_taken_into_account': 'Incident pris en compte',
+    'incident_resolved': 'Incident résolu',
 }
 
 

@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="fr">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Réinitialisation de votre code PIN - Map Action</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            color: #333;
+            background-color: #f4f4f4;
+            margin: 0;
+            padding: 0;
+        }
+
+        .container {
+            width: 100%;
+            max-width: 600px;
+            margin: 0 auto;
+            background-color: #ffffff;
+            border-radius: 12px;
+            overflow: hidden;
+            box-shadow: 0 6px 20px rgba(0, 0, 0, 0.1);
+        }
+
+        .header {
+            background: linear-gradient(135deg, #38A0DB 0%, #2c8fbd 100%);
+            color: #ffffff;
+            padding: 30px;
+            text-align: center;
+        }
+
+        .header h1 {
+            margin: 0;
+            font-size: 28px;
+            font-weight: 600;
+        }
+
+        .header p {
+            margin: 10px 0 0;
+            font-size: 14px;
+            opacity: 0.9;
+        }
+
+        .content {
+            padding: 40px 30px;
+        }
+
+        .welcome {
+            font-size: 18px;
+            font-weight: 500;
+            color: #38A0DB;
+            margin-bottom: 20px;
+        }
+
+        .content p {
+            font-size: 15px;
+            line-height: 1.7;
+            margin: 0 0 20px;
+            color: #555;
+        }
+
+        .btn-box {
+            text-align: center;
+            margin: 30px 0;
+        }
+
+        .btn {
+            display: inline-block;
+            background: linear-gradient(135deg, #38A0DB 0%, #2c8fbd 100%);
+            color: #ffffff !important;
+            padding: 14px 30px;
+            border-radius: 30px;
+            font-size: 16px;
+            font-weight: bold;
+            text-decoration: none;
+            box-shadow: 0 4px 10px rgba(56, 160, 219, 0.3);
+        }
+
+        .instructions {
+            background-color: #fff3cd;
+            border-left: 4px solid #ffc107;
+            padding: 15px 20px;
+            border-radius: 6px;
+            margin: 25px 0;
+            font-size: 14px;
+            color: #856404;
+        }
+
+        .footer {
+            padding: 20px;
+            background-color: #f4f4f4;
+            text-align: center;
+            font-size: 13px;
+            color: #777;
+        }
+
+        .footer p {
+            margin: 5px 0;
+        }
+
+        .footer a {
+            color: #38A0DB;
+            text-decoration: none;
+        }
+
+        .emoji {
+            font-size: 24px;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🌍 Map Action</h1>
+            <p>Votre plateforme de gestion d'incidents</p>
+        </div>
+        <div class="content">
+            <p class="welcome">Bonjour {{ first_name }} {{ last_name }},</p>
+            <p>
+                Vous avez demandé la réinitialisation de votre code PIN de connexion pour votre compte <strong>Agent de
+                    terrain</strong>.
+            </p>
+
+            <p>Cliquez sur le bouton ci-dessous pour choisir votre nouveau code PIN de 4 chiffres :</p>
+
+            <div class="btn-box">
+                <a href="{{ reset_link }}" class="btn">Réinitialiser mon code PIN</a>
+            </div>
+
+            <div class="instructions">
+                <strong>⚠️ Informations importantes :</strong>
+                <ul>
+                    <li>Ce lien de réinitialisation est à usage unique et expirera dans <strong>1 heure</strong>.</li>
+                    <li>Si vous n'avez pas demandé cette réinitialisation, veuillez ignorer cet e-mail. Votre code PIN
+                        actuel restera inchangé.</li>
+                </ul>
+            </div>
+        </div>
+        <div class="footer">
+            <p>&copy; Map Action. Tous droits réservés.</p>
+            <p>Contactez-nous à <a href="mailto:contact@map-action.com">contact@map-action.com</a></p>
+        </div>
+    </div>
+</body>
+
+</html>

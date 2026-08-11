@@ -91,6 +91,10 @@ celerybeat-schedule
 .env
 .venv
 .claude/
+
+# Firebase service account key (loaded via FCM_CREDENTIALS_PATH, never committed)
+firebase-credentials*.json
+firebase-service-account*.json
 # macOS
 .DS_Store
 
