@@ -945,7 +945,9 @@ class Indicateur(UUIDModel):
 
 
 class PasswordReset(UUIDModel):
-    code = models.CharField(max_length=7, blank=False, null=False)
+    # 7 chars pour les codes courts saisis à la main (PasswordResetRequestView) ;
+    # 64 pour les tokens longs de lien à usage unique (AgentRequestResetPinView, uuid4).
+    code = models.CharField(max_length=64, blank=False, null=False)
     user = models.ForeignKey(settings.AUTH_USER_MODEL, blank=False, null=False, on_delete=models.CASCADE)
     date_created = models.DateTimeField(auto_now_add=True)
     used = models.BooleanField(default=False)

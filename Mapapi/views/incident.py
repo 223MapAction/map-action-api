@@ -14,6 +14,10 @@ from rest_framework import status, generics
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
+from django.http import HttpResponse
+from django.template import Template, Context
+from django.utils.decorators import method_decorator
+from django.views.decorators.csrf import csrf_exempt
 
 from drf_spectacular.utils import (
     extend_schema, extend_schema_view, OpenApiParameter, OpenApiResponse,
@@ -33,7 +37,7 @@ from ..models import (
     ORG_ASSIGNMENT_PENDING, ORG_ASSIGNMENT_ACCEPTED, ORG_ASSIGNMENT_DECLINED,
     Prediction, PredictionStatus, Notification,
     ChatHistory, CHAT_ROLE_USER, CHAT_ROLE_ASSISTANT,
-    Rapport, IncidentAssignment,
+    Rapport, IncidentAssignment, PasswordReset,
 )
 from ..permissions import (
     IsIncidentLeader, IsSuperAdminOrOrgOwnIncident, IsSuperAdmin,
@@ -3399,3 +3403,310 @@ class AgentChangePinView(APIView):
             {"message": "PIN changé avec succès."},
             status=status.HTTP_200_OK,
         )
+
+
+class AgentRequestResetPinView(APIView):
+    permission_classes = []
+    authentication_classes = []
+
+    @extend_schema(
+        tags=['Authentification'],
+        operation_id='auth_agent_request_reset_pin',
+        summary="Demander la réinitialisation du PIN (agent de terrain)",
+        description="Recherche un agent de terrain par email ou téléphone, "
+                    "génère un token de réinitialisation et lui envoie un email "
+                    "avec le lien de réinitialisation. Endpoint public.",
+        request=inline_serializer(
+            name='AgentRequestResetPinRequest',
+            fields={
+                'email': drf_serializers.EmailField(required=False),
+                'phone': drf_serializers.CharField(required=False)
+            },
+        ),
+        responses={
+            200: OpenApiResponse(description="Email de réinitialisation envoyé."),
+            400: OpenApiResponse(description="Email ou téléphone manquant ou invalide."),
+            404: OpenApiResponse(description="Agent de terrain introuvable."),
+        },
+    )
+    def post(self, request):
+        email = request.data.get('email')
+        phone = request.data.get('phone')
+
+        if not email and not phone:
+            return Response(
+                {"error": "L'email ou le numéro de téléphone est requis."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        user = None
+        if email:
+            user = User.objects.filter(email__iexact=email.strip(), org_role=ORG_ROLE_FIELD, is_active=True).first()
+        elif phone:
+            user = User.objects.filter(phone=phone.strip(), org_role=ORG_ROLE_FIELD, is_active=True).first()
+
+        if not user:
+            return Response(
+                {"error": "Aucun agent de terrain actif trouvé avec ces identifiants."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        # Créer un enregistrement PasswordReset (réutilisé pour stocker le token de réinitialisation)
+        import uuid
+        token = str(uuid.uuid4())
+        PasswordReset.objects.create(user=user, code=token)
+
+        # Envoyer l'email
+        reset_link = f"https://api.map-action.com/MapApi/agent/reset-pin-link/{token}/"
+        # Envoi d'email via Celery asynchrone
+        from ..Send_mails import send_email
+        context = {
+            'first_name': user.first_name,
+            'last_name': user.last_name,
+            'organisation_name': user.organisation_member.name if user.organisation_member else "Map Action",
+            'reset_link': reset_link,
+        }
+        send_email.delay(
+            subject="🌍 Réinitialisation de votre code PIN - Map Action",
+            template_name="emails/agent_pin_reset_email.html",
+            context=context,
+            to_email=user.email,
+        )
+
+        return Response(
+            {"message": "Un e-mail contenant le lien de réinitialisation a été envoyé."},
+            status=status.HTTP_200_OK,
+        )
+
+
+@method_decorator(csrf_exempt, name='dispatch')
+class AgentResetPinLinkView(APIView):
+    permission_classes = []
+    authentication_classes = []
+
+    HTML_TEMPLATE = """<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Réinitialisation de votre PIN - Map Action</title>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Outfit', sans-serif;
+            background-color: #f3f4f6;
+            margin: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            color: #1f2937;
+            padding: 20px;
+            box-sizing: border-box;
+        }
+        .card {
+            background-color: #ffffff;
+            border-radius: 16px;
+            box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1);
+            width: 100%;
+            max-width: 400px;
+            padding: 32px;
+            box-sizing: border-box;
+        }
+        .header {
+            text-align: center;
+            margin-bottom: 24px;
+        }
+        .logo {
+            font-size: 32px;
+            margin-bottom: 8px;
+        }
+        h2 {
+            margin: 0;
+            font-size: 24px;
+            color: #2c8fbd;
+            font-weight: 600;
+        }
+        p {
+            font-size: 14px;
+            color: #6b7280;
+            margin-top: 8px;
+            margin-bottom: 0;
+            line-height: 1.5;
+        }
+        .form-group {
+            margin-bottom: 20px;
+        }
+        label {
+            display: block;
+            font-size: 14px;
+            font-weight: 500;
+            color: #374151;
+            margin-bottom: 6px;
+        }
+        input {
+            width: 100%;
+            padding: 12px 16px;
+            font-size: 16px;
+            border: 1px solid #d1d5db;
+            border-radius: 8px;
+            outline: none;
+            transition: border-color 0.2s, box-shadow 0.2s;
+            box-sizing: border-box;
+            font-family: inherit;
+            text-align: center;
+            letter-spacing: 4px;
+        }
+        input:focus {
+            border-color: #38A0DB;
+            box-shadow: 0 0 0 3px rgba(56, 160, 219, 0.2);
+        }
+        button {
+            width: 100%;
+            background: linear-gradient(135deg, #38A0DB 0%, #2c8fbd 100%);
+            color: #ffffff;
+            border: none;
+            padding: 14px;
+            font-size: 16px;
+            font-weight: 600;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: opacity 0.2s, transform 0.1s;
+        }
+        button:hover {
+            opacity: 0.95;
+        }
+        button:active {
+            transform: scale(0.98);
+        }
+        .error-message {
+            background-color: #fee2e2;
+            color: #b91c1c;
+            border-left: 4px solid #ef4444;
+            padding: 12px;
+            border-radius: 6px;
+            font-size: 14px;
+            margin-bottom: 20px;
+            line-height: 1.4;
+        }
+        .success-message {
+            text-align: center;
+        }
+        .success-icon {
+            font-size: 48px;
+            color: #10b981;
+            margin-bottom: 16px;
+        }
+    </style>
+</head>
+<body>
+    <div class="card">
+        {% if success %}
+        <div class="success-message">
+            <div class="success-icon">✓</div>
+            <h2>PIN réinitialisé !</h2>
+            <p>Vous pouvez maintenant fermer cette page et vous connecter sur l'application Map Action avec votre nouveau code PIN.</p>
+        </div>
+        {% else %}
+        <div class="header">
+            <div class="logo">🌍</div>
+            <h2>Nouveau code PIN</h2>
+            <p>Choisissez un nouveau code PIN confidentiel de 4 chiffres pour vous connecter.</p>
+        </div>
+        {% if error %}
+        <div class="error-message">
+            {{ error }}
+        </div>
+        {% endif %}
+        <form method="POST">
+            <div class="form-group">
+                <label for="new_pin">Nouveau code PIN (4 chiffres)</label>
+                <input type="password" id="new_pin" name="new_pin" maxlength="4" pattern="[0-9]*" inputmode="numeric" placeholder="••••" required autofocus>
+            </div>
+            <div class="form-group">
+                <label for="confirm_pin">Confirmez le code PIN</label>
+                <input type="password" id="confirm_pin" name="confirm_pin" maxlength="4" pattern="[0-9]*" inputmode="numeric" placeholder="••••" required>
+            </div>
+            <button type="submit">Enregistrer</button>
+        </form>
+        {% endif %}
+    </div>
+</body>
+</html>"""
+
+    def get(self, request, token):
+        try:
+            pass_reset = PasswordReset.objects.get(code=token, used=False)
+        except PasswordReset.DoesNotExist:
+            return HttpResponse(
+                Template(self.HTML_TEMPLATE).render(Context({"error": "Lien de réinitialisation invalide ou déjà utilisé."})),
+                status=400
+            )
+
+        # Vérifier l'expiration (1 heure)
+        timeout_hours = getattr(settings, 'PASSWORD_RESET_TIMEOUT_HOURS', 1)
+        expiry_time = pass_reset.date_created + timedelta(hours=timeout_hours)
+        if timezone.now() > expiry_time:
+            return HttpResponse(
+                Template(self.HTML_TEMPLATE).render(Context({"error": "Lien de réinitialisation expiré."})),
+                status=400
+            )
+
+        return HttpResponse(Template(self.HTML_TEMPLATE).render(Context({})))
+
+    def post(self, request, token):
+        try:
+            pass_reset = PasswordReset.objects.get(code=token, used=False)
+        except PasswordReset.DoesNotExist:
+            return HttpResponse(
+                Template(self.HTML_TEMPLATE).render(Context({"error": "Lien de réinitialisation invalide ou déjà utilisé."})),
+                status=400
+            )
+
+        timeout_hours = getattr(settings, 'PASSWORD_RESET_TIMEOUT_HOURS', 1)
+        expiry_time = pass_reset.date_created + timedelta(hours=timeout_hours)
+        if timezone.now() > expiry_time:
+            return HttpResponse(
+                Template(self.HTML_TEMPLATE).render(Context({"error": "Lien de réinitialisation expiré."})),
+                status=400
+            )
+
+        new_pin = request.data.get('new_pin') or request.POST.get('new_pin')
+        confirm_pin = request.data.get('confirm_pin') or request.POST.get('confirm_pin')
+
+        if not new_pin or not confirm_pin:
+            return HttpResponse(
+                Template(self.HTML_TEMPLATE).render(Context({"error": "Le code PIN et sa confirmation sont requis."})),
+                status=400
+            )
+
+        if new_pin != confirm_pin:
+            return HttpResponse(
+                Template(self.HTML_TEMPLATE).render(Context({"error": "Les codes PIN ne correspondent pas."})),
+                status=400
+            )
+
+        if not new_pin.isdigit() or len(new_pin) != 4:
+            return HttpResponse(
+                Template(self.HTML_TEMPLATE).render(Context({"error": "Le code PIN doit être composé de 4 chiffres."})),
+                status=400
+            )
+
+        weak_pins = ['0000', '1234', '1111', '2222', '3333', '4444', '5555', '6666', '7777', '8888', '9999']
+        if new_pin in weak_pins:
+            return HttpResponse(
+                Template(self.HTML_TEMPLATE).render(Context({"error": "Ce code PIN est trop simple. Choisissez un autre code."})),
+                status=400
+            )
+
+        user = pass_reset.user
+        from django.contrib.auth.hashers import make_password
+        user.pin_code = make_password(new_pin)
+        user.must_change_pin = False
+        user.save(update_fields=['pin_code', 'must_change_pin'])
+
+        pass_reset.used = True
+        pass_reset.date_used = timezone.now()
+        pass_reset.save(update_fields=['used', 'date_used'])
+
+        return HttpResponse(Template(self.HTML_TEMPLATE).render(Context({"success": True})))
