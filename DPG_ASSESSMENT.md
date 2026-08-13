@@ -112,21 +112,24 @@ The project provides clear mechanisms for accessing and extracting data.
 -   Provide documentation on data schemas and structures.
 
 ### 7. Adherence to Privacy and Applicable Laws
+**Status: Compliant**
 
-**Status: Partially Compliant**
+Model_deploy operates under Map Action's published privacy policy and terms of service, which govern the collection and processing of data across the platform, including this component.
 
-While the project implements some security practices, a more comprehensive approach to privacy and legal compliance is needed.
+**Evidence:**
 
-**Evidence**:
+A privacy policy has been published and is publicly accessible at: https://map-action.com/politique-de-confidentialite
+It covers categories of data collected, purposes of processing, retention periods, data sharing practices, and user rights (access, rectification, deletion), including specific provisions for minors and for anonymous (unregistered) reporting.
+The processing operates under Mali's Loi N°2013-015 of 21 May 2013 on the protection of personal data.
+Processing activities implemented by Map Action are the subject of a preliminary authorization request filed with Mali's Data Protection Authority (APDP), registered under references DAU-2024-0034/APDP and DAU-2024-0035/APDP.
+Terms of Service, including an Acceptable Use Policy and published content-moderation response times, are available at: https://map-action.com/conditions-generales-utilisation
+Use of environment variables for sensitive information.
+Implementation of CORS middleware for API security.
 
--   Use of environment variables for sensitive information.
--   Implementation of CORS middleware for API security.
+**Areas for Improvement:**
 
-**Areas for Improvement**:
-
--   Develop and publish a privacy policy.
--   Implement data anonymization techniques for stored predictions.
--   Conduct a thorough legal review to ensure compliance with relevant data protection laws (e.g., GDPR).
+Implement data anonymization techniques for stored predictions.
+Conduct a thorough legal review to ensure alignment with additional international frameworks (e.g., GDPR) where relevant to future regional expansion.
 
 ### 8. Adherence to Standards & Best Practices
 
