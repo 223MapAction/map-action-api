@@ -76,9 +76,15 @@ jobs:
 
       - name: Build and Deploy Docker Image
         run: |
-          docker-compose -f _cd_pipeline.yml build
-          docker-compose -f _cd_pipeline.yml down --remove-orphans
-          docker-compose -f _cd_pipeline.yml up --build -d
+          # Pin the Compose project name to `mapapi` (the pre-existing running
+          # stack). The repo was renamed Mapapi -> map-action-api, which changed the
+          # runner checkout dir and thus the default project name -> Compose tried to
+          # create a NEW network on the same fixed subnet (192.168.0.0/24) while the
+          # old `mapapi` network was still up -> "Pool overlaps". Pinning makes `down`
+          # tear down the running stack and `up` recreate it under the same network.
+          docker-compose -p mapapi -f _cd_pipeline.yml build
+          docker-compose -p mapapi -f _cd_pipeline.yml down --remove-orphans
+          docker-compose -p mapapi -f _cd_pipeline.yml up --build -d
 
       - name: Post-deployment cleanup
         if: always()
