@@ -1,5 +1,6 @@
 # backend/supabase_storage.py
 import os
+import uuid
 from django.conf import settings
 from django.core.files.storage import Storage
 from django.core.files.base import ContentFile
@@ -80,15 +81,41 @@ class SupabaseStorage(Storage):
                     # non bloquant
                     print(f"Note: Could not verify/create folder {folder_path}: {e}")
 
+    @staticmethod
+    def _is_duplicate_error(e):
+        """Vrai si l'erreur Supabase est un conflit de nom (409 / Duplicate)."""
+        code = getattr(e, "statusCode", None) or getattr(e, "status_code", None)
+        if str(code) == "409":
+            return True
+        text = f"{getattr(e, 'message', '')} {getattr(e, 'name', '')} {e}".lower()
+        return "duplicate" in text or "already exists" in text or "409" in text
+
+    @staticmethod
+    def _uniquify_name(name):
+        """Ajoute un suffixe aléatoire court avant l'extension."""
+        root, ext = os.path.splitext(name)
+        return f"{root}_{uuid.uuid4().hex[:8]}{ext}"
+
     def _save(self, name, content):
-        try:
-            file_content = content.read()
-            if "/" in name:
-                self._ensure_folder_exists(name)
-            _ = self._get_storage().upload(name, file_content)
-            return name
-        except StorageException as e:
-            raise IOError(f"Error saving file to Supabase Storage: {e}")
+        # `content.read()` UNE seule fois : le pointeur ne se réinitialise pas entre
+        # deux tentatives d'upload.
+        file_content = content.read()
+        if "/" in name:
+            self._ensure_folder_exists(name)
+        # Supabase renvoie 409 "Duplicate" si le nom existe déjà. `exists()` (via
+        # `list()`, paginé) n'est PAS fiable, donc `get_available_name()` peut laisser
+        # passer une collision (ex. photos nommées `images.jpeg`). On uniquifie le nom
+        # et on réessaie plutôt que de renvoyer un 500 sur la création d'incident.
+        attempts = 5
+        for i in range(attempts):
+            try:
+                self._get_storage().upload(name, file_content)
+                return name
+            except StorageException as e:
+                if self._is_duplicate_error(e) and i < attempts - 1:
+                    name = self._uniquify_name(name)
+                    continue
+                raise IOError(f"Error saving file to Supabase Storage: {e}")
 
     def delete(self, name):
         try:
