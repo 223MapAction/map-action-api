@@ -17,10 +17,17 @@ jobs:
           docker system prune -af
           docker volume prune -f
           df -h
-          sudo find /home/ec2-user/actions-runner/_work/Mapapi -name "__pycache__" -type d -exec rm -rf {} + 2>/dev/null || true
-          sudo find /home/ec2-user/actions-runner/_work/Mapapi -name "*.pyc" -exec rm -f {} + 2>/dev/null || true
-          sudo chown -R ec2-user:ec2-user /home/ec2-user/actions-runner/_work/Mapapi || true
-          sudo chmod -R 755 /home/ec2-user/actions-runner/_work/Mapapi || true
+          # Repo was renamed Mapapi -> map-action-api, which changed the runner's
+          # _work checkout dir (_work/<repo>/<repo>). This job's path was stale
+          # after the rename, so it silently cleaned a directory that no longer
+          # existed while Docker (running as root) kept writing __pycache__/*.pyc
+          # as root into the REAL workspace via the bind mount (.:/app in
+          # docker-compose.local.yml / _cd_pipeline.yml) -> Actions' own pre-checkout
+          # clean then failed with EACCES trying to unlink root-owned files.
+          sudo find /home/ec2-user/actions-runner/_work/map-action-api -name "__pycache__" -type d -exec rm -rf {} + 2>/dev/null || true
+          sudo find /home/ec2-user/actions-runner/_work/map-action-api -name "*.pyc" -exec rm -f {} + 2>/dev/null || true
+          sudo chown -R ec2-user:ec2-user /home/ec2-user/actions-runner/_work/map-action-api || true
+          sudo chmod -R 755 /home/ec2-user/actions-runner/_work/map-action-api || true
 
   deploy:
     needs: cleanup
