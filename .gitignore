@@ -100,3 +100,6 @@ firebase-service-account*.json
 
 
 uploads/
+
+# JetBrains IDE
+.idea/
