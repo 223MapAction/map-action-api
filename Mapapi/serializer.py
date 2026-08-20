@@ -670,9 +670,12 @@ class CollaborationEnrichedSerializer(CollaborationPartiesMixin, ModelSerializer
         return obj.user.organisation if obj.user else None
 
     def get_participants_count(self, obj) -> int:
-        return Collaboration.objects.filter(
-            incident=obj.incident, status='accepted'
-        ).count()
+        # Lit le cache `prefetch_related('incident__collaboration_set')` de la vue
+        # plutôt que de relancer une requête COUNT par ligne (N+1 sur la liste).
+        incident = getattr(obj, 'incident', None)
+        if incident is None:
+            return 0
+        return sum(1 for c in incident.collaboration_set.all() if c.status == 'accepted')
 
 class ColaborationSerializer(serializers.ModelSerializer):
     class Meta:

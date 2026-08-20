@@ -153,6 +153,10 @@ class CollaborationDashboardView(generics.ListAPIView):
         ).select_related(
             'incident', 'user', 'user__organisation_member',
             'incident__taken_by', 'incident__taken_by__organisation_member',
+        ).prefetch_related(
+            # get_participants_count lit ce cache prefetché au lieu de relancer une
+            # requête par ligne (cf. CollaborationEnrichedSerializer.get_participants_count).
+            'incident__collaboration_set',
         ).order_by('-created_at')
 
         # --- Filtre par statut ---
@@ -281,8 +285,16 @@ class CollaborationView(generics.CreateAPIView, generics.ListAPIView):
         qs = Collaboration.objects.filter(
             collaboration_scope_q(user, self.request.query_params.get('scope'))
         ).select_related(
-            'incident', 'user', 'user__organisation_member',
+            'incident', 'incident__user_id', 'incident__category_id',
+            'incident__prediction', 'user', 'user__organisation_member',
             'incident__taken_by', 'incident__taken_by__organisation_member',
+        ).prefetch_related(
+            # CollaborationSerializer nest le IncidentSerializer complet
+            # (incident_details) : sans ce prefetch, chaque ligne relance des
+            # requêtes pour org_assignments/collaboration_set (IncidentActingOrgsMixin).
+            'incident__category_ids',
+            'incident__org_assignments__organisation',
+            'incident__collaboration_set__user__organisation_member',
         ).order_by('-id')
 
         # --- Filtres optionnels ---
