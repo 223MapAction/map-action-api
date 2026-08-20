@@ -35,7 +35,7 @@ from ..models import (
     ORG_ROLE_FIELD, ORG_ROLE_ADMIN, ORG_ROLE_BUREAU,
     Organisation, IncidentOrgAssignment,
     ORG_ASSIGNMENT_PENDING, ORG_ASSIGNMENT_ACCEPTED, ORG_ASSIGNMENT_DECLINED,
-    Prediction, PredictionStatus, Notification,
+    Prediction, PredictionStatus, Notification, NOTIF_TYPE_TITLES,
     ChatHistory, CHAT_ROLE_USER, CHAT_ROLE_ASSISTANT,
     Rapport, IncidentAssignment, PasswordReset,
 )
@@ -44,7 +44,7 @@ from ..permissions import (
     IsOrgAdmin, IsAgentBureau, IsOrgOperative, IsSuperAdminRole,
 )
 from ..roles import is_org_admin, is_super_admin
-from ..tasks import analyze_incident_with_model_task
+from ..tasks import analyze_incident_with_model_task, send_push_notification_task
 from ..Send_mails import send_email
 import logging
 
@@ -581,7 +581,11 @@ class MyIncidentsView(generics.ListAPIView):
         return (
             Incident.objects
             .filter(user_id=self.request.user)
-            .select_related('user_id', 'category_id')
+            .select_related('user_id', 'category_id', 'taken_by__organisation_member')
+            .prefetch_related(
+                'org_assignments__organisation',
+                'collaboration_set__user__organisation_member',
+            )
             .order_by('-created_at')
         )
 
@@ -655,6 +659,10 @@ class OrgIncidentsView(generics.ListAPIView):
         qs = (
             Incident.objects
             .select_related('user_id', 'category_id', 'taken_by__organisation_member')
+            .prefetch_related(
+                'org_assignments__organisation',
+                'collaboration_set__user__organisation_member',
+            )
             .filter(flt)
             .exclude(is_deleted=True)
             .distinct()
@@ -900,8 +908,36 @@ class IncidentAssignmentListCreateView(generics.ListCreateAPIView):
 
         # Notifier l'agent par email de sa nouvelle mission
         self._send_assignment_email(assignment, request)
+        # + notification in-app et push FCM (agent de terrain sur le mobile,
+        # potentiellement hors ligne / app fermée : l'email seul ne suffit pas).
+        self._notify_agent_assignment(assignment)
 
         return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+    @staticmethod
+    def _notify_agent_assignment(assignment):
+        agent = assignment.agent
+        if not agent:
+            return
+        incident = assignment.incident
+        titre = incident.title or incident.zone or f"Incident #{incident.id}"
+        message = f"Vous avez été assigné(e) à l'incident «{titre}»."[:255]
+        try:
+            Notification.objects.create(
+                user=agent,
+                notif_type='incident_assignment',
+                message=message,
+                incident=incident,
+            )
+        except Exception as exc:
+            logger.warning("notification in-app d'assignation échouée: %s", exc)
+
+        send_push_notification_task.delay(
+            str(agent.id),
+            NOTIF_TYPE_TITLES['incident_assignment'],
+            message,
+            data={"incident_id": str(incident.id), "assignment_id": str(assignment.id)},
+        )
 
     @staticmethod
     def _send_assignment_email(assignment, request):
@@ -1303,6 +1339,10 @@ class IncidentResolvedAPIListView(generics.ListAPIView):
             .exclude(org_own_work_q(self.request.user))
             .exclude(is_deleted=True)
             .select_related('user_id', 'category_id', 'taken_by__organisation_member')
+            .prefetch_related(
+                'org_assignments__organisation',
+                'collaboration_set__user__organisation_member',
+            )
             .distinct()
             .order_by('-created_at')
         )
@@ -1537,6 +1577,10 @@ class IncidentNotResolvedAPIListView(generics.ListAPIView):
             .exclude(org_own_work_q(self.request.user))
             .exclude(is_deleted=True)
             .select_related('user_id', 'category_id', 'taken_by__organisation_member')
+            .prefetch_related(
+                'org_assignments__organisation',
+                'collaboration_set__user__organisation_member',
+            )
             .distinct()
             .order_by('-created_at')
         )
@@ -2921,7 +2965,16 @@ class TrashIncidentsView(generics.ListAPIView):
     serializer_class = IncidentGetSerializer
 
     def get_queryset(self):
-        return Incident.objects.filter(is_deleted=True).select_related('user_id', 'category_id').order_by('-created_at')
+        return (
+            Incident.objects
+            .filter(is_deleted=True)
+            .select_related('user_id', 'category_id', 'taken_by__organisation_member')
+            .prefetch_related(
+                'org_assignments__organisation',
+                'collaboration_set__user__organisation_member',
+            )
+            .order_by('-created_at')
+        )
 
 
 @extend_schema_view(
