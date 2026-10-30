@@ -13,7 +13,8 @@ Checks:
   - celery       : ping live workers (`app.control.ping`).          (degraded)
   - model_deploy : TLS cert validity + days-to-expiry of the AI     (degraded;
                    service host (the exact thing that broke).        expired ⇒ degraded)
-  - predictions  : failure rate of recent AI predictions.           (degraded)
+  - predictions  : failed or fallback results among recent AI       (degraded)
+                   predictions.
 
 Response contract (public, no auth, so the monitor can poll it):
   - HTTP 200 + {"status": "ok",       ...}  when every check passes.
@@ -40,6 +41,7 @@ import os
 import socket
 import ssl
 from datetime import datetime, timezone
+from itertools import takewhile
 from urllib.parse import urlparse
 
 from django.conf import settings
@@ -58,7 +60,8 @@ _PROBE_TIMEOUT = 3.0            # seconds for network probes (TLS, redis)
 _CELERY_PING_TIMEOUT = 1.5     # seconds to wait for a worker to answer
 _CERT_WARN_DAYS = 14           # cert expiring sooner than this ⇒ warn
 _PREDICTION_SAMPLE = 20        # look at the most recent N predictions
-_PREDICTION_FAIL_RATIO = 0.5   # >50% failed ⇒ degraded
+_PREDICTION_FAIL_RATIO = 0.5   # >50% bad ⇒ degraded
+_PREDICTION_BAD_STREAK = 5     # this many bad in a row ⇒ degraded (low volume)
 
 
 def _check_database():
@@ -139,8 +142,14 @@ def _check_model_deploy():
 
 
 def _check_predictions():
-    """Failure rate of the most recent AI predictions (guards the 413/cert class
-    of downstream breakage that leaves the API up but predictions all failing)."""
+    """Bad results among the most recent AI predictions (guards the 413/cert class
+    of downstream breakage that leaves the API up but predictions all failing).
+
+    completed_with_warning counts as bad: when its vision provider fails,
+    Model_deploy still answers 200 with default values, so an outage there never
+    produces a failed prediction. A real "Autre" classification also lands in
+    this status, which the ratio and the streak tolerate when it is occasional.
+    """
     try:
         recent = list(
             Prediction.objects.order_by("-created_at")
@@ -149,16 +158,26 @@ def _check_predictions():
         if not recent:
             return {"status": "ok", "detail": "no predictions yet", "sample": 0}
         failed = sum(1 for s in recent if s == PredictionStatus.FAILED)
-        ratio = failed / len(recent)
+        degraded = sum(1 for s in recent if s == PredictionStatus.COMPLETED_WITH_WARNING)
+        bad = failed + degraded
+        ratio = bad / len(recent)
+        streak = sum(1 for _ in takewhile(
+            lambda s: s in (PredictionStatus.FAILED, PredictionStatus.COMPLETED_WITH_WARNING),
+            recent,
+        ))
         result = {
             "status": "ok",
             "sample": len(recent),
             "failed": failed,
+            "degraded": degraded,
             "failure_ratio": round(ratio, 2),
         }
-        if ratio > _PREDICTION_FAIL_RATIO:
+        if ratio > _PREDICTION_FAIL_RATIO or streak >= _PREDICTION_BAD_STREAK:
             result["status"] = "warn"
-            result["detail"] = f"{failed}/{len(recent)} recent predictions failed"
+            result["detail"] = (
+                f"{bad}/{len(recent)} recent predictions failed or degraded, "
+                f"latest {streak} in a row"
+            )
         return result
     except Exception as exc:
         return {"status": "fail", "detail": str(exc)[:200]}
@@ -186,7 +205,7 @@ class HealthCheckView(APIView):
         summary="Health-check profond (monitoring)",
         description=(
             "Sonde toutes les dépendances de prod (DB, Redis, workers Celery, cert "
-            "TLS du service IA Model_deploy, taux d'échec des prédictions récentes) "
+            "TLS du service IA Model_deploy, prédictions récentes échouées ou dégradées) "
             "en un seul appel, pour un monitoring uptime. Public. Renvoie 200 "
             "`ok`/`degraded`, ou 503 `down` si une dépendance critique (DB/Redis) "
             "est injoignable."
