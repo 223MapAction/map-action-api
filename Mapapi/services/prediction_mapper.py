@@ -67,12 +67,10 @@ def fill_prediction_from_model_response(prediction, data):
     prediction.full_response = data
 
     # Legacy mirror fields for backward-compat with the old Prediction shape.
-    if not prediction.incident_type:
-        prediction.incident_type = prediction.macro_category or ""
-    if not prediction.piste_solution:
-        prediction.piste_solution = prediction.recommendation or ""
-    if not prediction.analysis:
-        prediction.analysis = prediction.description or ""
+    # Always overwritten: a re-run must replace what a failed analysis left here.
+    prediction.incident_type = prediction.macro_category or ""
+    prediction.piste_solution = prediction.recommendation or ""
+    prediction.analysis = prediction.description or ""
 
     if (
         prediction.macro_category == "Autre"
